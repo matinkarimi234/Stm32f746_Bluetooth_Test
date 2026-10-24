@@ -25,6 +25,12 @@ typedef struct
     uint16_t ACLOutMPS;
 
     uint8_t  EndpointsReady;
+	
+		uint8_t EventInPipe;
+		uint8_t ACLInPipe;
+		uint8_t ACLOutPipe;
+
+		uint8_t PipesReady;
 
 } BT_EndpointInfo_t;
 
