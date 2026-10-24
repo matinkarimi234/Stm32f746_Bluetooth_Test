@@ -69,4 +69,29 @@ extern volatile uint8_t BT_HCI_ResetUSBComplete;
 extern volatile uint8_t BT_HCI_ResetEventSeen;
 extern volatile uint8_t BT_HCI_ResetStatus;
 
+
+#define BT_VERSION_WAIT_RESET  0U
+#define BT_VERSION_SEND        1U
+#define BT_VERSION_USB_WAIT    2U
+#define BT_VERSION_EVENT_WAIT  3U
+#define BT_VERSION_OK          4U
+#define BT_VERSION_ERROR       5U
+
+typedef struct
+{
+    uint8_t  HCI_Version;
+    uint16_t HCI_Revision;
+    uint8_t  LMP_Version;
+    uint16_t Manufacturer;
+    uint16_t LMP_Subversion;
+
+} BT_VersionInfo_t;
+
+extern volatile BT_VersionInfo_t BT_VersionInfo;
+extern volatile uint8_t BT_VersionState;
+extern volatile uint8_t BT_VersionUSBComplete;
+extern volatile uint8_t BT_VersionEventSeen;
+extern volatile uint8_t BT_VersionStatus;
+
+
 #endif
