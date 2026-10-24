@@ -138,7 +138,6 @@ static USBH_StatusTypeDef USBH_HID_InterfaceInit(USBH_HandleTypeDef *phost)
 {
   USBH_StatusTypeDef status;
   HID_HandleTypeDef *HID_Handle;
-  uint16_t ep_mps;
   uint8_t max_ep;
   uint8_t num = 0U;
   uint8_t interface;
@@ -195,7 +194,7 @@ static USBH_StatusTypeDef USBH_HID_InterfaceInit(USBH_HandleTypeDef *phost)
   HID_Handle->length    = phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[0].wMaxPacketSize;
   HID_Handle->poll      = phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[0].bInterval;
 
-  if (HID_Handle->poll < HID_MIN_POLL)
+  if (HID_Handle->poll  < HID_MIN_POLL)
   {
     HID_Handle->poll = HID_MIN_POLL;
   }
@@ -214,23 +213,21 @@ static USBH_StatusTypeDef USBH_HID_InterfaceInit(USBH_HandleTypeDef *phost)
     {
       HID_Handle->InEp = (phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[num].bEndpointAddress);
       HID_Handle->InPipe = USBH_AllocPipe(phost, HID_Handle->InEp);
-      ep_mps = phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[num].wMaxPacketSize;
 
       /* Open pipe for IN endpoint */
       (void)USBH_OpenPipe(phost, HID_Handle->InPipe, HID_Handle->InEp, phost->device.address,
-                          phost->device.speed, USB_EP_TYPE_INTR, ep_mps);
+                          phost->device.speed, USB_EP_TYPE_INTR, HID_Handle->length);
 
       (void)USBH_LL_SetToggle(phost, HID_Handle->InPipe, 0U);
     }
     else
     {
       HID_Handle->OutEp = (phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[num].bEndpointAddress);
-      HID_Handle->OutPipe = USBH_AllocPipe(phost, HID_Handle->OutEp);
-      ep_mps = phost->device.CfgDesc.Itf_Desc[interface].Ep_Desc[num].wMaxPacketSize;
+      HID_Handle->OutPipe  = USBH_AllocPipe(phost, HID_Handle->OutEp);
 
       /* Open pipe for OUT endpoint */
       (void)USBH_OpenPipe(phost, HID_Handle->OutPipe, HID_Handle->OutEp, phost->device.address,
-                          phost->device.speed, USB_EP_TYPE_INTR, ep_mps);
+                          phost->device.speed, USB_EP_TYPE_INTR, HID_Handle->length);
 
       (void)USBH_LL_SetToggle(phost, HID_Handle->OutPipe, 0U);
     }
@@ -343,7 +340,7 @@ static USBH_StatusTypeDef USBH_HID_ClassRequest(USBH_HandleTypeDef *phost)
       {
         HID_Handle->ctl_state = USBH_HID_REQ_IDLE;
 
-        /* all requests performed */
+        /* all requests performed*/
         phost->pUser(phost, HOST_USER_CLASS_ACTIVE);
         status = USBH_OK;
       }
@@ -381,27 +378,21 @@ static USBH_StatusTypeDef USBH_HID_Process(USBH_HandleTypeDef *phost)
   switch (HID_Handle->state)
   {
     case USBH_HID_INIT:
-      status = HID_Handle->Init(phost);
-
-      if (status == USBH_OK)
-      {
-        HID_Handle->state = USBH_HID_IDLE;
-      }
-      else
-      {
-        USBH_ErrLog("HID Class Init failed");
-        HID_Handle->state = USBH_HID_ERROR;
-        status = USBH_FAIL;
-      }
+      HID_Handle->Init(phost);
+      HID_Handle->state = USBH_HID_IDLE;
 
 #if (USBH_USE_OS == 1U)
-      USBH_OS_PutMessage(phost, USBH_URB_EVENT, 0U, 0U);
-#endif /* (USBH_USE_OS == 1U) */
+      phost->os_msg = (uint32_t)USBH_URB_EVENT;
+#if (osCMSIS < 0x20000U)
+      (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
+#else
+      (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
+#endif
+#endif
       break;
 
     case USBH_HID_IDLE:
       status = USBH_HID_GetReport(phost, 0x01U, 0U, HID_Handle->pData, (uint8_t)HID_Handle->length);
-
       if (status == USBH_OK)
       {
         HID_Handle->state = USBH_HID_SYNC;
@@ -423,8 +414,13 @@ static USBH_StatusTypeDef USBH_HID_Process(USBH_HandleTypeDef *phost)
       }
 
 #if (USBH_USE_OS == 1U)
-      USBH_OS_PutMessage(phost, USBH_URB_EVENT, 0U, 0U);
-#endif /* (USBH_USE_OS == 1U) */
+      phost->os_msg = (uint32_t)USBH_URB_EVENT;
+#if (osCMSIS < 0x20000U)
+      (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
+#else
+      (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
+#endif
+#endif
       break;
 
     case USBH_HID_SYNC:
@@ -435,8 +431,13 @@ static USBH_StatusTypeDef USBH_HID_Process(USBH_HandleTypeDef *phost)
       }
 
 #if (USBH_USE_OS == 1U)
-      USBH_OS_PutMessage(phost, USBH_URB_EVENT, 0U, 0U);
-#endif /* (USBH_USE_OS == 1U) */
+      phost->os_msg = (uint32_t)USBH_URB_EVENT;
+#if (osCMSIS < 0x20000U)
+      (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
+#else
+      (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
+#endif
+#endif
       break;
 
     case USBH_HID_GET_DATA:
@@ -454,15 +455,20 @@ static USBH_StatusTypeDef USBH_HID_Process(USBH_HandleTypeDef *phost)
       {
         XferSize = USBH_LL_GetLastXferSize(phost, HID_Handle->InPipe);
 
-        if ((HID_Handle->DataReady == 0U) && (XferSize != 0U) && (HID_Handle->fifo.buf != NULL))
+        if ((HID_Handle->DataReady == 0U) && (XferSize != 0U))
         {
           (void)USBH_HID_FifoWrite(&HID_Handle->fifo, HID_Handle->pData, HID_Handle->length);
           HID_Handle->DataReady = 1U;
           USBH_HID_EventCallback(phost);
 
 #if (USBH_USE_OS == 1U)
-          USBH_OS_PutMessage(phost, USBH_URB_EVENT, 0U, 0U);
-#endif /* (USBH_USE_OS == 1U) */
+          phost->os_msg = (uint32_t)USBH_URB_EVENT;
+#if (osCMSIS < 0x20000U)
+          (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
+#else
+          (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
+#endif
+#endif
         }
       }
       else
@@ -504,8 +510,13 @@ static USBH_StatusTypeDef USBH_HID_SOFProcess(USBH_HandleTypeDef *phost)
       HID_Handle->state = USBH_HID_GET_DATA;
 
 #if (USBH_USE_OS == 1U)
-      USBH_OS_PutMessage(phost, USBH_URB_EVENT, 0U, 0U);
-#endif /* (USBH_USE_OS == 1U) */
+      phost->os_msg = (uint32_t)USBH_URB_EVENT;
+#if (osCMSIS < 0x20000U)
+      (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
+#else
+      (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
+#endif
+#endif
     }
   }
   return USBH_OK;
@@ -524,12 +535,6 @@ USBH_StatusTypeDef USBH_HID_GetHIDReportDescriptor(USBH_HandleTypeDef *phost,
 {
 
   USBH_StatusTypeDef status;
-
-  if (length > sizeof(phost->device.Data))
-  {
-    USBH_ErrLog("Control error: Get HID Report Descriptor failed, data buffer size issue");
-    return USBH_NOT_SUPPORTED;
-  }
 
   status = USBH_GetDescriptor(phost,
                               USB_REQ_RECIPIENT_INTERFACE | USB_REQ_TYPE_STANDARD,
@@ -559,12 +564,6 @@ USBH_StatusTypeDef USBH_HID_GetHIDDescriptor(USBH_HandleTypeDef *phost,
                                              uint16_t length)
 {
   USBH_StatusTypeDef status;
-
-  if (length > sizeof(phost->device.Data))
-  {
-    USBH_ErrLog("Control error: Get HID Descriptor failed, data buffer size issue");
-    return USBH_NOT_SUPPORTED;
-  }
 
   status = USBH_GetDescriptor(phost,
                               USB_REQ_RECIPIENT_INTERFACE | USB_REQ_TYPE_STANDARD,

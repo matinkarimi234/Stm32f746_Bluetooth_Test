@@ -185,10 +185,6 @@ extern "C" {
 #define USBH_MAX_PIPES_NBR                                 16U
 #endif /* USBH_MAX_PIPES_NBR */
 
-#ifndef USBH_NAK_SOF_COUNT
-#define USBH_NAK_SOF_COUNT                                 0x01U
-#endif /* USBH_NAK_SOF_COUNT */
-
 #define USBH_DEVICE_ADDRESS_DEFAULT                        0x00U
 #define USBH_DEVICE_ADDRESS                                0x01U
 
@@ -196,7 +192,7 @@ extern "C" {
 
 #if (USBH_USE_OS == 1U)
 #define MSGQUEUE_OBJECTS                                   0x10U
-#endif /* (USBH_USE_OS == 1U) */
+#endif
 
 
 /**
@@ -403,8 +399,7 @@ typedef enum
   USBH_URB_NOTREADY,
   USBH_URB_NYET,
   USBH_URB_ERROR,
-  USBH_URB_STALL,
-  USBH_URB_NAK_WAIT
+  USBH_URB_STALL
 } USBH_URBStateTypeDef;
 
 typedef enum
@@ -444,7 +439,7 @@ typedef struct
   __IO uint8_t                      is_connected;
   __IO uint8_t                      is_disconnected;
   __IO uint8_t                      is_ReEnumerated;
-  __IO uint8_t                      PortEnabled;
+  uint8_t                           PortEnabled;
   uint8_t                           current_interface;
   USBH_DevDescTypeDef               DevDesc;
   USBH_CfgDescTypeDef               CfgDesc;
@@ -478,10 +473,6 @@ typedef struct _USBH_HandleTypeDef
   uint32_t              ClassNumber;
   uint32_t              Pipes[16];
   __IO uint32_t         Timer;
-#if defined (USBH_IN_NAK_PROCESS) && (USBH_IN_NAK_PROCESS == 1U)
-  uint32_t              NakTimer;
-  uint32_t              NakTimeout;
-#endif /* defined (USBH_IN_NAK_PROCESS) && (USBH_IN_NAK_PROCESS == 1U) */
   uint32_t              Timeout;
   uint8_t               id;
   void                 *pData;
@@ -496,7 +487,7 @@ typedef struct _USBH_HandleTypeDef
   osThreadId_t          thread;
 #endif
   uint32_t              os_msg;
-#endif /* (USBH_USE_OS == 1U) */
+#endif
 
 } USBH_HandleTypeDef;
 
