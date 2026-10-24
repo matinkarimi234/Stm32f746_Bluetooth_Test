@@ -37,4 +37,23 @@ typedef struct
 extern volatile BT_EndpointInfo_t BT_Endpoints;
 
 
+#define BT_EVENT_BUFFER_SIZE 64U
+
+// Event receive states
+#define BT_EVENT_RX_SUBMIT   0U
+#define BT_EVENT_RX_WAIT     1U
+#define BT_EVENT_RX_DELAY    2U
+#define BT_EVENT_RX_ERROR    3U
+
+// Debug variables
+extern volatile uint8_t BT_EventRxState;
+
+extern volatile uint32_t BT_EventSubmitCount;
+extern volatile uint32_t BT_EventPacketCount;
+extern volatile uint32_t BT_EventNAKCount;
+extern volatile uint32_t BT_EventErrorCount;
+
+extern volatile uint16_t BT_LastEventLength;
+extern volatile uint8_t BT_LastEventData[BT_EVENT_BUFFER_SIZE];
+
 #endif
