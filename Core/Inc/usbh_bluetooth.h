@@ -56,4 +56,17 @@ extern volatile uint32_t BT_EventErrorCount;
 extern volatile uint16_t BT_LastEventLength;
 extern volatile uint8_t BT_LastEventData[BT_EVENT_BUFFER_SIZE];
 
+/* HCI Reset state machine */
+#define BT_HCI_RESET_IDLE          0U
+#define BT_HCI_RESET_SEND          1U
+#define BT_HCI_RESET_USB_WAIT      2U
+#define BT_HCI_RESET_EVENT_WAIT    3U
+#define BT_HCI_RESET_OK            4U
+#define BT_HCI_RESET_ERROR         5U
+
+extern volatile uint8_t BT_HCI_ResetState;
+extern volatile uint8_t BT_HCI_ResetUSBComplete;
+extern volatile uint8_t BT_HCI_ResetEventSeen;
+extern volatile uint8_t BT_HCI_ResetStatus;
+
 #endif
