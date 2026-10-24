@@ -114,41 +114,6 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-		
-		if ((USB_Recognized == 0U) &&
-				((hUsbHostHS.gState == HOST_SET_CONFIGURATION) ||
-				 (hUsbHostHS.gState == HOST_CHECK_CLASS) ||
-				 (hUsbHostHS.gState == HOST_ABORT_STATE)) &&
-				(hUsbHostHS.device.DevDesc.idVendor != 0U) &&
-				(hUsbHostHS.device.CfgDesc.bNumInterfaces > 0U))
-		{
-				// USB device identification
-				USB_VID = hUsbHostHS.device.DevDesc.idVendor;
-				USB_PID = hUsbHostHS.device.DevDesc.idProduct;
-
-				// First interface identification
-				USB_Class =
-						hUsbHostHS.device.CfgDesc.Itf_Desc[0].bInterfaceClass;
-
-				USB_SubClass =
-						hUsbHostHS.device.CfgDesc.Itf_Desc[0].bInterfaceSubClass;
-
-				USB_Protocol =
-						hUsbHostHS.device.CfgDesc.Itf_Desc[0].bInterfaceProtocol;
-
-				// Negotiated USB speed
-				USB_Speed = hUsbHostHS.device.speed;
-
-				USB_Recognized = 1;
-		}
-
-		// Allow recognition again after disconnection
-		if ((hUsbHostHS.gState == HOST_IDLE) ||
-				(hUsbHostHS.gState == HOST_DEV_WAIT_FOR_ATTACHMENT))
-		{
-				USB_Recognized = 0;
-		}
-		
   }
   /* USER CODE END 3 */
 }

@@ -548,18 +548,10 @@ static USBH_StatusTypeDef USBH_ParseEPDesc(USBH_HandleTypeDef *phost, USBH_EpDes
   }
   else
   {
-    if (USBH_MAX_EP_PACKET_SIZE < (uint16_t)USBH_MAX_DATA_BUFFER)
-    {
-      /* Make sure that maximum packet size (bits 0..10) does not exceed the max endpoint packet size */
-      ep_descriptor->wMaxPacketSize &= ~0x7FFU;
-      ep_descriptor->wMaxPacketSize |= MIN((uint16_t)(LE16(buf + 4) & 0x7FFU), (uint16_t)USBH_MAX_EP_PACKET_SIZE);
-    }
-    else
-    {
-      /* Make sure that maximum packet size (bits 0..10) does not exceed the total buffer length */
-      ep_descriptor->wMaxPacketSize &= ~0x7FFU;
-      ep_descriptor->wMaxPacketSize |= USBH_MAX_EP_PACKET_SIZE;
-    }
+		/* Read the actual endpoint maximum packet size
+		 * from the USB endpoint descriptor.
+		 */
+		ep_descriptor->wMaxPacketSize = LE16(buf + 4U);
   }
   /* For high-speed interrupt/isochronous endpoints, bInterval can vary from 1 to 16 */
   if (phost->device.speed == (uint8_t)USBH_SPEED_HIGH)
