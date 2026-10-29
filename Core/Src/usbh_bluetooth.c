@@ -78,6 +78,20 @@ volatile uint16_t BT_LastCommandStatusOpcode = 0U;
 
 static const uint8_t BT_DesiredScanMode = 0x03U;
 
+volatile uint8_t BT_HCI_DebugFailStage = 0U;
+volatile uint8_t BT_HCI_DebugUSBStatus = 0xFFU;
+volatile uint8_t BT_HCI_DebugControlState = 0xFFU;
+volatile uint8_t BT_HCI_DebugUSBCompleted = 0U;
+volatile uint8_t BT_DebugOutURB = 0xFFU;
+volatile uint32_t BT_DebugOutURBCount[6] = {0U};
+
+
+/* Bluetooth local name */
+static const uint8_t BT_LocalNamePayload[BT_LOCAL_NAME_BYTES] = BT_DEVICE_NAME;
+
+volatile uint8_t BT_NameState = BT_NAME_WAIT_READY;
+volatile uint8_t BT_NameStatus = 0xFFU;
+
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_Request(USBH_HandleTypeDef *phost);
@@ -206,6 +220,9 @@ static void BT_ResetGenericCommand(void)
 		BT_ScanState = BT_SCAN_WAIT_READY;
 		BT_ScanMode = 0xFFU;
 		BT_ScanStatus = 0xFFU;
+		
+		BT_NameState = BT_NAME_WAIT_READY;
+		BT_NameStatus = 0xFFU;
 }
 
 static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
@@ -381,6 +398,10 @@ static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *pa
     BT_HCI_CmdStatus = 0xFFU;
     BT_HCI_ResponseLength = 0U;
     BT_HCI_CmdState = BT_HCI_CMD_SEND;
+		BT_HCI_DebugFailStage = 0U;
+		BT_HCI_DebugUSBStatus = 0xFFU;
+		BT_HCI_DebugControlState = 0xFFU;
+		BT_HCI_DebugUSBCompleted = 0U;
 
     return USBH_OK;
 }
@@ -413,32 +434,64 @@ static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost)
             BT_HCI_CmdState = BT_HCI_CMD_USB_WAIT;
             break;
 
-        case BT_HCI_CMD_USB_WAIT:
-            status = USBH_CtlReq(phost, BT_HCI_CmdBuffer, BT_HCI_CmdLength);
 
-            if (status == USBH_OK)
-            {
-                if (BT_HCI_CmdOpcode == 0x0C03U) { BT_HCI_ResetUSBComplete = 1U; BT_HCI_ResetState = BT_HCI_RESET_EVENT_WAIT; }
-                if (BT_HCI_CmdOpcode == 0x1001U) { BT_VersionUSBComplete = 1U; BT_VersionState = BT_VERSION_EVENT_WAIT; }
-                if (BT_HCI_CmdOpcode == 0x1009U) { BT_AddrUSBComplete = 1U; BT_AddrState = BT_ADDR_EVENT_WAIT; }
+				case BT_HCI_CMD_USB_WAIT:
+						
+						if (phost->Control.state == CTRL_DATA_OUT_WAIT)
+						{
+								uint8_t urb = (uint8_t)USBH_LL_GetURBState(phost, phost->Control.pipe_out);
 
-                BT_HCI_CmdStartTick = phost->Timer;
-                BT_HCI_CmdState = BT_HCI_CMD_EVENT_WAIT;
-            }
-            else if (status != USBH_BUSY)
-            {
-                BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-            }
-            else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
-            {
-                BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-            }
-            break;
+								BT_DebugOutURB = urb;
 
-        case BT_HCI_CMD_EVENT_WAIT:
-            if (BT_HCI_CmdEventSeen != 0U) { BT_HCI_CmdState = (BT_HCI_CmdStatus == 0U) ? BT_HCI_CMD_OK : BT_HCI_CMD_ERROR; }
-            else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U) { BT_HCI_CmdState = BT_HCI_CMD_ERROR; }
-            break;
+								if (urb < 6U) { BT_DebugOutURBCount[urb]++; }
+						}
+						status = USBH_CtlReq(phost, BT_HCI_CmdBuffer, BT_HCI_CmdLength);
+
+						BT_HCI_DebugUSBStatus = (uint8_t)status;
+						BT_HCI_DebugControlState = (uint8_t)phost->Control.state;
+
+						if (status == USBH_OK)
+						{
+								BT_HCI_DebugUSBCompleted = 1U;
+								BT_HCI_CmdStartTick = phost->Timer;
+								BT_HCI_CmdState = BT_HCI_CMD_EVENT_WAIT;
+						}
+						else if (status != USBH_BUSY)
+						{
+								BT_HCI_DebugFailStage = 1U;
+								BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+						}
+						else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
+						{
+								BT_HCI_DebugFailStage = 2U;
+								BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+						}
+
+						break;
+
+
+
+			case BT_HCI_CMD_EVENT_WAIT:
+
+					if (BT_HCI_CmdEventSeen != 0U)
+					{
+							if (BT_HCI_CmdStatus == 0U)
+							{
+									BT_HCI_CmdState = BT_HCI_CMD_OK;
+							}
+							else
+							{
+									BT_HCI_DebugFailStage = 4U;
+									BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+							}
+					}
+					else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
+					{
+							BT_HCI_DebugFailStage = 3U;
+							BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+					}
+
+					break;
 
         case BT_HCI_CMD_OK:
             break;
@@ -623,6 +676,8 @@ static void BT_ProcessScanConfiguration(void)
         case BT_SCAN_WAIT_READY:
 
             if (BT_InitState != BT_INIT_READY) { break; }
+						if (BT_NameState == BT_NAME_ERROR) { BT_ScanState = BT_SCAN_ERROR; break; }
+						if (BT_NameState != BT_NAME_OK) { break; }
 
             /* Bit 37 indicates BR/EDR is not supported. */
             if ((BT_LocalFeatures[4] & 0x20U) != 0U)
@@ -756,6 +811,56 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 }
 
 
+static void BT_ProcessLocalName(void)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_NameState)
+    {
+        case BT_NAME_WAIT_READY:
+
+            if (BT_InitState == BT_INIT_READY) { BT_NameState = BT_NAME_SEND; }
+            else if (BT_InitState == BT_INIT_ERROR) { BT_NameState = BT_NAME_ERROR; }
+            break;
+
+        case BT_NAME_SEND:
+
+            status = BT_HCI_SendCommand(0x0C13U, BT_LocalNamePayload, BT_LOCAL_NAME_BYTES);
+
+            if (status == USBH_OK) { BT_NameState = BT_NAME_WAIT; }
+            else if (status == USBH_FAIL) { BT_NameState = BT_NAME_ERROR; }
+            break;
+
+        case BT_NAME_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_NameStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == 0x0C13U) && (BT_HCI_ResponseLength == 6U) && (BT_HCI_Response[0] == 0x0EU) && (BT_HCI_Response[1] == 0x04U) && (BT_HCI_Response[3] == 0x13U) && (BT_HCI_Response[4] == 0x0CU) && (BT_NameStatus == 0U))
+                {
+                    BT_NameState = BT_NAME_OK;
+                }
+                else
+                {
+                    BT_NameState = BT_NAME_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_NameStatus = BT_HCI_CmdStatus;
+                BT_NameState = BT_NAME_ERROR;
+            }
+            break;
+
+        case BT_NAME_OK:
+        case BT_NAME_ERROR:
+        default:
+            break;
+    }
+}
+
+
 /* ------------------------------------------------------------- */
 /* USB Host process callback                                     */
 /* ------------------------------------------------------------- */
@@ -843,8 +948,10 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 
 		BT_ProcessInitialization();
 		BT_ProcessHCICommand(phost);
+		BT_ProcessLocalName();
 		BT_ProcessScanConfiguration();
-
+		
+		
     return USBH_OK;
 }
 

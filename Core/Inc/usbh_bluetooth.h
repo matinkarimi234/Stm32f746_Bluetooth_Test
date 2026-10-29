@@ -35,7 +35,7 @@
 #define BT_ADDR_OK                    4U
 #define BT_ADDR_ERROR                 5U
 
-#define BT_HCI_MAX_CMD_PARAMS         32U
+#define BT_HCI_MAX_CMD_PARAMS         248U
 #define BT_HCI_MAX_RESPONSE           64U
 #define BT_HCI_CMD_IDLE               0U
 #define BT_HCI_CMD_SEND               1U
@@ -150,6 +150,19 @@ extern volatile uint8_t BT_ScanStatus;
 #define BT_HCI_EVT_DISCONNECTION        0x05U
 #define BT_HCI_EVT_COMMAND_COMPLETE     0x0EU
 #define BT_HCI_EVT_COMMAND_STATUS       0x0FU
+
+
+#define BT_DEVICE_NAME            "Resistivity_Meter"
+#define BT_LOCAL_NAME_BYTES       248U
+
+#define BT_NAME_WAIT_READY        0U
+#define BT_NAME_SEND              1U
+#define BT_NAME_WAIT             2U
+#define BT_NAME_OK               3U
+#define BT_NAME_ERROR            4U
+
+extern volatile uint8_t BT_NameState;
+extern volatile uint8_t BT_NameStatus;
 
 extern volatile uint32_t BT_AsyncEventCount;
 extern volatile uint32_t BT_ConnectionRequestCount;
