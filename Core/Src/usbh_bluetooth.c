@@ -4,49 +4,77 @@
 #include "usbh_ioreq.h"
 #include "usbh_ctlreq.h"
 
-/* USB interface and endpoint information */
+/* ------------------------------------------------------------- */
+/* USB interface and endpoint information                        */
+/* ------------------------------------------------------------- */
+
 volatile uint8_t BT_InterfaceFound = 0U;
 volatile BT_EndpointInfo_t BT_Endpoints = {0};
 
-/* HCI event reception */
+/* ------------------------------------------------------------- */
+/* USB reception and HCI reassembly                              */
+/* ------------------------------------------------------------- */
+
+static uint8_t BT_EventUSBPacket[BT_EVENT_USB_PACKET_SIZE];
 static uint8_t BT_EventRxBuffer[BT_EVENT_BUFFER_SIZE];
+
 static uint32_t BT_EventLastTick = 0U;
+static uint32_t BT_HCI_PartialTick = 0U;
+
 volatile uint8_t BT_EventRxState = BT_EVENT_RX_SUBMIT;
 volatile uint32_t BT_EventSubmitCount = 0U;
 volatile uint32_t BT_EventPacketCount = 0U;
 volatile uint32_t BT_EventNAKCount = 0U;
 volatile uint32_t BT_EventErrorCount = 0U;
+
 volatile uint16_t BT_LastEventLength = 0U;
 volatile uint8_t BT_LastEventData[BT_EVENT_BUFFER_SIZE];
 
-/* Legacy Watch variables retained for compatibility */
+volatile uint16_t BT_HCI_PartialLength = 0U;
+volatile uint16_t BT_HCI_ExpectedLength = 0U;
+volatile uint16_t BT_HCI_LastCompleteLength = 0U;
+volatile uint8_t BT_HCI_LastCompleteCode = 0U;
+
+volatile uint32_t BT_HCI_CompleteEventCount = 0U;
+volatile uint32_t BT_HCI_AssemblyErrorCount = 0U;
+volatile uint32_t BT_HCI_AssemblyTimeoutCount = 0U;
+
+/* ------------------------------------------------------------- */
+/* HCI Reset results                                             */
+/* ------------------------------------------------------------- */
+
 volatile uint8_t BT_HCI_ResetState = BT_HCI_RESET_IDLE;
 volatile uint8_t BT_HCI_ResetUSBComplete = 0U;
 volatile uint8_t BT_HCI_ResetEventSeen = 0U;
 volatile uint8_t BT_HCI_ResetStatus = 0xFFU;
 
-/* Read Local Version results */
+/* ------------------------------------------------------------- */
+/* Read Local Version results                                    */
+/* ------------------------------------------------------------- */
+
 volatile BT_VersionInfo_t BT_VersionInfo = {0};
 volatile uint8_t BT_VersionState = BT_VERSION_WAIT_RESET;
 volatile uint8_t BT_VersionUSBComplete = 0U;
 volatile uint8_t BT_VersionEventSeen = 0U;
 volatile uint8_t BT_VersionStatus = 0xFFU;
 
-/* Read BD_ADDR results */
+/* ------------------------------------------------------------- */
+/* Read BD_ADDR results                                          */
+/* ------------------------------------------------------------- */
+
 volatile uint8_t BT_AddrState = BT_ADDR_WAIT_VERSION;
 volatile uint8_t BT_AddrUSBComplete = 0U;
 volatile uint8_t BT_AddrEventSeen = 0U;
 volatile uint8_t BT_AddrStatus = 0xFFU;
 volatile uint8_t BT_BD_ADDR[6] = {0};
 
-/* Shared HCI command engine and automatic initialization */
+/* ------------------------------------------------------------- */
+/* Generic HCI command engine                                    */
+/* ------------------------------------------------------------- */
+
 static uint8_t BT_HCI_CmdBuffer[3U + BT_HCI_MAX_CMD_PARAMS];
 static uint8_t BT_HCI_CmdLength = 0U;
 static uint32_t BT_HCI_CmdStartTick = 0U;
-
-volatile uint8_t BT_InitState = BT_INIT_IDLE;
-volatile uint16_t BT_InitErrorOpcode = 0U;
-volatile uint8_t BT_LocalFeatures[8] = {0};
 
 volatile uint8_t BT_HCI_CmdState = BT_HCI_CMD_IDLE;
 volatile uint8_t BT_HCI_CmdEventSeen = 0U;
@@ -54,19 +82,45 @@ volatile uint8_t BT_HCI_CmdStatus = 0xFFU;
 volatile uint16_t BT_HCI_CmdOpcode = 0U;
 volatile uint8_t BT_HCI_ResponseLength = 0U;
 volatile uint8_t BT_HCI_Response[BT_HCI_MAX_RESPONSE];
+volatile uint8_t BT_HCI_CmdReplyEvent = 0U;
 
-/* Bluetooth discovery configuration */
+/* ------------------------------------------------------------- */
+/* Initialization and supported features                         */
+/* ------------------------------------------------------------- */
+
+volatile uint8_t BT_InitState = BT_INIT_IDLE;
+volatile uint16_t BT_InitErrorOpcode = 0U;
+volatile uint8_t BT_LocalFeatures[8] = {0};
+
+/* ------------------------------------------------------------- */
+/* Bluetooth local name                                         */
+/* ------------------------------------------------------------- */
+
+static const uint8_t BT_LocalNamePayload[BT_LOCAL_NAME_BYTES] = BT_DEVICE_NAME;
+
+volatile uint8_t BT_NameState = BT_NAME_WAIT_READY;
+volatile uint8_t BT_NameStatus = 0xFFU;
+
+/* ------------------------------------------------------------- */
+/* Scan configuration                                            */
+/* ------------------------------------------------------------- */
+
+static const uint8_t BT_DesiredScanMode = 0x03U;
+
 volatile uint8_t BT_ScanState = BT_SCAN_WAIT_READY;
 volatile uint8_t BT_ScanMode = 0xFFU;
 volatile uint8_t BT_ScanStatus = 0xFFU;
 
-/* Asynchronous event debugging */
+/* ------------------------------------------------------------- */
+/* Asynchronous event information                                */
+/* ------------------------------------------------------------- */
+
 volatile uint32_t BT_AsyncEventCount = 0U;
 volatile uint32_t BT_ConnectionRequestCount = 0U;
 volatile uint32_t BT_CommandStatusCount = 0U;
 
 volatile uint8_t BT_AsyncLastCode = 0U;
-volatile uint8_t BT_AsyncLastLength = 0U;
+volatile uint16_t BT_AsyncLastLength = 0U;
 volatile uint8_t BT_AsyncLastData[BT_EVENT_BUFFER_SIZE];
 
 volatile uint8_t BT_RequesterBD_ADDR[6];
@@ -76,7 +130,12 @@ volatile uint32_t BT_RequesterClassOfDevice = 0U;
 volatile uint8_t BT_LastCommandStatus = 0xFFU;
 volatile uint16_t BT_LastCommandStatusOpcode = 0U;
 
-static const uint8_t BT_DesiredScanMode = 0x03U;
+volatile uint8_t BT_InquiryCompleteSeen = 0U;
+volatile uint8_t BT_InquiryCompleteStatus = 0xFFU;
+
+/* ------------------------------------------------------------- */
+/* USB debugging variables                                       */
+/* ------------------------------------------------------------- */
 
 volatile uint8_t BT_HCI_DebugFailStage = 0U;
 volatile uint8_t BT_HCI_DebugUSBStatus = 0xFFU;
@@ -85,17 +144,9 @@ volatile uint8_t BT_HCI_DebugUSBCompleted = 0U;
 volatile uint8_t BT_DebugOutURB = 0xFFU;
 volatile uint32_t BT_DebugOutURBCount[6] = {0U};
 
-
-/* Bluetooth local name */
-static const uint8_t BT_LocalNamePayload[BT_LOCAL_NAME_BYTES] = BT_DEVICE_NAME;
-
-volatile uint8_t BT_NameState = BT_NAME_WAIT_READY;
-volatile uint8_t BT_NameStatus = 0xFFU;
-
-volatile uint8_t BT_HCI_CmdReplyEvent = 0U;
-
-volatile uint8_t BT_InquiryCompleteSeen = 0U;
-volatile uint8_t BT_InquiryCompleteStatus = 0xFFU;
+/* ------------------------------------------------------------- */
+/* Function declarations                                         */
+/* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost);
@@ -106,12 +157,22 @@ static USBH_StatusTypeDef BT_SOF(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *params, uint8_t length);
 static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost);
 static void BT_ProcessInitialization(void);
+static void BT_ProcessScanConfiguration(void);
+static void BT_ProcessLocalName(void);
+
 static void BT_DecodeHCIEvent(uint32_t length);
+static void BT_DecodeHCICommandStatus(uint32_t length);
+static void BT_ProcessAsyncEvent(uint32_t length);
+static void BT_AppendHCIEventBytes(const uint8_t *data, uint16_t length);
+
+/* ------------------------------------------------------------- */
+/* Bluetooth USB Host class registration                         */
+/* ------------------------------------------------------------- */
 
 USBH_ClassTypeDef USBH_Bluetooth_Class = {"BLUETOOTH", USB_BT_CLASS, BT_Init, BT_DeInit, BT_Request, BT_Process, BT_SOF, NULL};
 
 /* ------------------------------------------------------------- */
-/* Endpoint and pipe management                                  */
+/* Reset functions                                               */
 /* ------------------------------------------------------------- */
 
 static void BT_ClearEndpoints(void)
@@ -130,27 +191,6 @@ static void BT_ClearEndpoints(void)
     BT_Endpoints.PipesReady = 0U;
 }
 
-static void BT_ResetAsyncEvents(void)
-{
-    uint16_t i;
-
-    BT_AsyncEventCount = 0U;
-    BT_ConnectionRequestCount = 0U;
-    BT_CommandStatusCount = 0U;
-
-    BT_AsyncLastCode = 0U;
-    BT_AsyncLastLength = 0U;
-
-    BT_RequesterLinkType = 0xFFU;
-    BT_RequesterClassOfDevice = 0U;
-
-    BT_LastCommandStatus = 0xFFU;
-    BT_LastCommandStatusOpcode = 0U;
-
-    for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++) { BT_AsyncLastData[i] = 0U; }
-    for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = 0U; }
-}
-
 static void BT_ResetEventRx(void)
 {
     uint16_t i;
@@ -163,11 +203,35 @@ static void BT_ResetEventRx(void)
     BT_LastEventLength = 0U;
     BT_EventLastTick = 0U;
 
-    for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++)
-    {
-        BT_EventRxBuffer[i] = 0U;
-        BT_LastEventData[i] = 0U;
-    }
+    BT_HCI_PartialLength = 0U;
+    BT_HCI_ExpectedLength = 0U;
+    BT_HCI_LastCompleteLength = 0U;
+    BT_HCI_LastCompleteCode = 0U;
+    BT_HCI_CompleteEventCount = 0U;
+    BT_HCI_AssemblyErrorCount = 0U;
+    BT_HCI_AssemblyTimeoutCount = 0U;
+    BT_HCI_PartialTick = 0U;
+
+    for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++) { BT_EventRxBuffer[i] = 0U; BT_LastEventData[i] = 0U; }
+    for (i = 0U; i < BT_EVENT_USB_PACKET_SIZE; i++) { BT_EventUSBPacket[i] = 0U; }
+}
+
+static void BT_ResetAsyncEvents(void)
+{
+    uint16_t i;
+
+    BT_AsyncEventCount = 0U;
+    BT_ConnectionRequestCount = 0U;
+    BT_CommandStatusCount = 0U;
+    BT_AsyncLastCode = 0U;
+    BT_AsyncLastLength = 0U;
+    BT_RequesterLinkType = 0xFFU;
+    BT_RequesterClassOfDevice = 0U;
+    BT_LastCommandStatus = 0xFFU;
+    BT_LastCommandStatusOpcode = 0U;
+
+    for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++) { BT_AsyncLastData[i] = 0U; }
+    for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = 0U; }
 }
 
 static void BT_ResetHCIState(void)
@@ -206,33 +270,45 @@ static void BT_ResetAddressState(void)
 
 static void BT_ResetGenericCommand(void)
 {
-    uint8_t i;
+    uint16_t i;
 
     BT_HCI_CmdState = BT_HCI_CMD_IDLE;
     BT_HCI_CmdEventSeen = 0U;
     BT_HCI_CmdStatus = 0xFFU;
     BT_HCI_CmdOpcode = 0U;
     BT_HCI_ResponseLength = 0U;
+    BT_HCI_CmdReplyEvent = 0U;
     BT_HCI_CmdLength = 0U;
     BT_HCI_CmdStartTick = 0U;
+
     BT_InitState = BT_INIT_IDLE;
     BT_InitErrorOpcode = 0U;
+
+    BT_NameState = BT_NAME_WAIT_READY;
+    BT_NameStatus = 0xFFU;
+
+    BT_ScanState = BT_SCAN_WAIT_READY;
+    BT_ScanMode = 0xFFU;
+    BT_ScanStatus = 0xFFU;
+
+    BT_InquiryCompleteSeen = 0U;
+    BT_InquiryCompleteStatus = 0xFFU;
+
+    BT_HCI_DebugFailStage = 0U;
+    BT_HCI_DebugUSBStatus = 0xFFU;
+    BT_HCI_DebugControlState = 0xFFU;
+    BT_HCI_DebugUSBCompleted = 0U;
+    BT_DebugOutURB = 0xFFU;
 
     for (i = 0U; i < 8U; i++) { BT_LocalFeatures[i] = 0U; }
     for (i = 0U; i < sizeof(BT_HCI_CmdBuffer); i++) { BT_HCI_CmdBuffer[i] = 0U; }
     for (i = 0U; i < BT_HCI_MAX_RESPONSE; i++) { BT_HCI_Response[i] = 0U; }
-		
-		BT_ScanState = BT_SCAN_WAIT_READY;
-		BT_ScanMode = 0xFFU;
-		BT_ScanStatus = 0xFFU;
-		
-		BT_NameState = BT_NAME_WAIT_READY;
-		BT_NameStatus = 0xFFU;
-		
-		BT_HCI_CmdReplyEvent = 0U;
-		BT_InquiryCompleteSeen = 0U;
-		BT_InquiryCompleteStatus = 0xFFU;
+    for (i = 0U; i < 6U; i++) { BT_DebugOutURBCount[i] = 0U; }
 }
+
+/* ------------------------------------------------------------- */
+/* USB pipe management                                           */
+/* ------------------------------------------------------------- */
 
 static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
 {
@@ -261,7 +337,7 @@ static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
 }
 
 /* ------------------------------------------------------------- */
-/* USB Host Bluetooth class initialization                       */
+/* USB Bluetooth class initialization                            */
 /* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
@@ -279,7 +355,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     BT_InterfaceFound = 0U;
     BT_ClearEndpoints();
     BT_ResetEventRx();
-		BT_ResetAsyncEvents();
+    BT_ResetAsyncEvents();
     BT_ResetHCIState();
     BT_ResetVersionState();
     BT_ResetAddressState();
@@ -322,7 +398,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     }
 
     if ((BT_Endpoints.EventInAddr == 0U) || (BT_Endpoints.ACLInAddr == 0U) || (BT_Endpoints.ACLOutAddr == 0U)) { BT_InterfaceFound = 0U; return USBH_FAIL; }
-    if ((BT_Endpoints.EventInMPS == 0U) || (BT_Endpoints.EventInMPS > BT_EVENT_BUFFER_SIZE) || (BT_Endpoints.ACLInMPS == 0U) || (BT_Endpoints.ACLOutMPS == 0U)) { BT_InterfaceFound = 0U; return USBH_FAIL; }
+    if ((BT_Endpoints.EventInMPS == 0U) || (BT_Endpoints.EventInMPS > BT_EVENT_USB_PACKET_SIZE) || (BT_Endpoints.ACLInMPS == 0U) || (BT_Endpoints.ACLOutMPS == 0U)) { BT_InterfaceFound = 0U; return USBH_FAIL; }
 
     BT_Endpoints.EndpointsReady = 1U;
 
@@ -357,7 +433,7 @@ pipe_fail:
 }
 
 /* ------------------------------------------------------------- */
-/* USB Host class callbacks                                      */
+/* USB Bluetooth class callbacks                                 */
 /* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
@@ -367,7 +443,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
     BT_InterfaceFound = 0U;
     BT_ClearEndpoints();
     BT_ResetEventRx();
-		BT_ResetAsyncEvents();
+    BT_ResetAsyncEvents();
     BT_ResetHCIState();
     BT_ResetVersionState();
     BT_ResetAddressState();
@@ -383,15 +459,16 @@ static USBH_StatusTypeDef BT_Request(USBH_HandleTypeDef *phost)
 }
 
 /* ------------------------------------------------------------- */
-/* Generic HCI command engine                                    */
+/* Generic HCI command queue                                     */
 /* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *params, uint8_t length)
 {
-    uint8_t i;
+    uint16_t i;
 
     if (BT_Endpoints.PipesReady == 0U) { return USBH_FAIL; }
-    if ((length > BT_HCI_MAX_CMD_PARAMS) || ((length != 0U) && (params == NULL))) { return USBH_FAIL; }
+    if (length > BT_HCI_MAX_CMD_PARAMS) { return USBH_FAIL; }
+    if ((length != 0U) && (params == NULL)) { return USBH_FAIL; }
     if (BT_HCI_CmdState == BT_HCI_CMD_ERROR) { return USBH_FAIL; }
     if ((BT_HCI_CmdState != BT_HCI_CMD_IDLE) && (BT_HCI_CmdState != BT_HCI_CMD_OK)) { return USBH_BUSY; }
 
@@ -406,12 +483,13 @@ static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *pa
     BT_HCI_CmdEventSeen = 0U;
     BT_HCI_CmdStatus = 0xFFU;
     BT_HCI_ResponseLength = 0U;
-		BT_HCI_CmdReplyEvent = 0U;
+    BT_HCI_CmdReplyEvent = 0U;
     BT_HCI_CmdState = BT_HCI_CMD_SEND;
-		BT_HCI_DebugFailStage = 0U;
-		BT_HCI_DebugUSBStatus = 0xFFU;
-		BT_HCI_DebugControlState = 0xFFU;
-		BT_HCI_DebugUSBCompleted = 0U;
+
+    BT_HCI_DebugFailStage = 0U;
+    BT_HCI_DebugUSBStatus = 0xFFU;
+    BT_HCI_DebugControlState = 0xFFU;
+    BT_HCI_DebugUSBCompleted = 0U;
 
     return USBH_OK;
 }
@@ -421,6 +499,10 @@ USBH_StatusTypeDef BT_HCI_SendCommand(uint16_t opcode, const uint8_t *params, ui
     if (BT_InitState != BT_INIT_READY) { return USBH_BUSY; }
     return BT_HCI_QueueCommand(opcode, params, length);
 }
+
+/* ------------------------------------------------------------- */
+/* Generic HCI command processing                                */
+/* ------------------------------------------------------------- */
 
 static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost)
 {
@@ -444,68 +526,63 @@ static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost)
             BT_HCI_CmdState = BT_HCI_CMD_USB_WAIT;
             break;
 
+        case BT_HCI_CMD_USB_WAIT:
+            if (phost->Control.state == CTRL_DATA_OUT_WAIT)
+            {
+                uint8_t urb = (uint8_t)USBH_LL_GetURBState(phost, phost->Control.pipe_out);
+                BT_DebugOutURB = urb;
+                if (urb < 6U) { BT_DebugOutURBCount[urb]++; }
+            }
 
-				case BT_HCI_CMD_USB_WAIT:
-						
-						if (phost->Control.state == CTRL_DATA_OUT_WAIT)
-						{
-								uint8_t urb = (uint8_t)USBH_LL_GetURBState(phost, phost->Control.pipe_out);
+            status = USBH_CtlReq(phost, BT_HCI_CmdBuffer, BT_HCI_CmdLength);
 
-								BT_DebugOutURB = urb;
+            BT_HCI_DebugUSBStatus = (uint8_t)status;
+            BT_HCI_DebugControlState = (uint8_t)phost->Control.state;
 
-								if (urb < 6U) { BT_DebugOutURBCount[urb]++; }
-						}
-						status = USBH_CtlReq(phost, BT_HCI_CmdBuffer, BT_HCI_CmdLength);
+            if (status == USBH_OK)
+            {
+                BT_HCI_DebugUSBCompleted = 1U;
 
-						BT_HCI_DebugUSBStatus = (uint8_t)status;
-						BT_HCI_DebugControlState = (uint8_t)phost->Control.state;
+                if (BT_HCI_CmdOpcode == 0x0C03U) { BT_HCI_ResetUSBComplete = 1U; BT_HCI_ResetState = BT_HCI_RESET_EVENT_WAIT; }
+                if (BT_HCI_CmdOpcode == 0x1001U) { BT_VersionUSBComplete = 1U; BT_VersionState = BT_VERSION_EVENT_WAIT; }
+                if (BT_HCI_CmdOpcode == 0x1009U) { BT_AddrUSBComplete = 1U; BT_AddrState = BT_ADDR_EVENT_WAIT; }
 
-						if (status == USBH_OK)
-						{
-								BT_HCI_DebugUSBCompleted = 1U;
-								BT_HCI_CmdStartTick = phost->Timer;
-								BT_HCI_CmdState = BT_HCI_CMD_EVENT_WAIT;
-						}
-						else if (status != USBH_BUSY)
-						{
-								BT_HCI_DebugFailStage = 1U;
-								BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-						}
-						else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
-						{
-								BT_HCI_DebugFailStage = 2U;
-								BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-						}
-
-						break;
-
-
-
-			case BT_HCI_CMD_EVENT_WAIT:
-
-					if (BT_HCI_CmdEventSeen != 0U)
-					{
-							if (BT_HCI_CmdStatus == 0U)
-							{
-									BT_HCI_CmdState = BT_HCI_CMD_OK;
-							}
-							else
-							{
-									BT_HCI_DebugFailStage = 4U;
-									BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-							}
-					}
-					else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
-					{
-							BT_HCI_DebugFailStage = 3U;
-							BT_HCI_CmdState = BT_HCI_CMD_ERROR;
-					}
-
-					break;
-
-        case BT_HCI_CMD_OK:
+                BT_HCI_CmdStartTick = phost->Timer;
+                BT_HCI_CmdState = BT_HCI_CMD_EVENT_WAIT;
+            }
+            else if (status != USBH_BUSY)
+            {
+                BT_HCI_DebugFailStage = 1U;
+                BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+            }
+            else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
+            {
+                BT_HCI_DebugFailStage = 2U;
+                BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+            }
             break;
 
+        case BT_HCI_CMD_EVENT_WAIT:
+            if (BT_HCI_CmdEventSeen != 0U)
+            {
+                if (BT_HCI_CmdStatus == 0U)
+                {
+                    BT_HCI_CmdState = BT_HCI_CMD_OK;
+                }
+                else
+                {
+                    BT_HCI_DebugFailStage = 4U;
+                    BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+                }
+            }
+            else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
+            {
+                BT_HCI_DebugFailStage = 3U;
+                BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+            }
+            break;
+
+        case BT_HCI_CMD_OK:
         case BT_HCI_CMD_ERROR:
             break;
 
@@ -516,7 +593,7 @@ static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost)
 }
 
 /* ------------------------------------------------------------- */
-/* Unified Bluetooth controller initialization                   */
+/* Automatic initialization                                      */
 /* ------------------------------------------------------------- */
 
 static void BT_InitFailed(uint16_t opcode)
@@ -588,7 +665,7 @@ static void BT_ProcessInitialization(void)
 }
 
 /* ------------------------------------------------------------- */
-/* HCI Command Complete event decoding                           */
+/* HCI Command Complete decoder                                  */
 /* ------------------------------------------------------------- */
 
 static void BT_DecodeHCIEvent(uint32_t length)
@@ -597,7 +674,7 @@ static void BT_DecodeHCIEvent(uint32_t length)
     uint16_t opcode;
 
     if ((length < 6U) || (length > BT_HCI_MAX_RESPONSE)) { return; }
-    if ((BT_EventRxBuffer[0] != 0x0EU) || (((uint32_t)BT_EventRxBuffer[1] + 2U) != length)) { return; }
+    if ((BT_EventRxBuffer[0] != BT_HCI_EVT_COMMAND_COMPLETE) || (((uint32_t)BT_EventRxBuffer[1] + 2U) != length)) { return; }
     if ((BT_HCI_CmdState != BT_HCI_CMD_USB_WAIT) && (BT_HCI_CmdState != BT_HCI_CMD_EVENT_WAIT)) { return; }
 
     opcode = (uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8);
@@ -674,9 +751,12 @@ static void BT_DecodeHCIEvent(uint32_t length)
     }
 
     BT_HCI_CmdReplyEvent = BT_HCI_EVT_COMMAND_COMPLETE;
-		BT_HCI_CmdEventSeen = 1U;
+    BT_HCI_CmdEventSeen = 1U;
 }
 
+/* ------------------------------------------------------------- */
+/* HCI Command Status decoder                                    */
+/* ------------------------------------------------------------- */
 
 static void BT_DecodeHCICommandStatus(uint32_t length)
 {
@@ -686,7 +766,6 @@ static void BT_DecodeHCICommandStatus(uint32_t length)
     if (length != 6U) { return; }
     if (BT_EventRxBuffer[0] != BT_HCI_EVT_COMMAND_STATUS) { return; }
     if (BT_EventRxBuffer[1] != 4U) { return; }
-
     if ((BT_HCI_CmdState != BT_HCI_CMD_USB_WAIT) && (BT_HCI_CmdState != BT_HCI_CMD_EVENT_WAIT)) { return; }
 
     opcode = (uint16_t)BT_EventRxBuffer[4] | ((uint16_t)BT_EventRxBuffer[5] << 8);
@@ -702,7 +781,58 @@ static void BT_DecodeHCICommandStatus(uint32_t length)
     BT_HCI_CmdEventSeen = 1U;
 }
 
+/* ------------------------------------------------------------- */
+/* Local Bluetooth name configuration                            */
+/* ------------------------------------------------------------- */
 
+static void BT_ProcessLocalName(void)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_NameState)
+    {
+        case BT_NAME_WAIT_READY:
+            if (BT_InitState == BT_INIT_READY) { BT_NameState = BT_NAME_SEND; }
+            else if (BT_InitState == BT_INIT_ERROR) { BT_NameState = BT_NAME_ERROR; }
+            break;
+
+        case BT_NAME_SEND:
+            status = BT_HCI_SendCommand(0x0C13U, BT_LocalNamePayload, BT_LOCAL_NAME_BYTES);
+            if (status == USBH_OK) { BT_NameState = BT_NAME_WAIT; }
+            else if (status == USBH_FAIL) { BT_NameState = BT_NAME_ERROR; }
+            break;
+
+        case BT_NAME_WAIT:
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_NameStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == 0x0C13U) && (BT_HCI_ResponseLength == 6U) && (BT_HCI_Response[0] == 0x0EU) && (BT_HCI_Response[1] == 0x04U) && (BT_HCI_Response[3] == 0x13U) && (BT_HCI_Response[4] == 0x0CU) && (BT_NameStatus == 0U))
+                {
+                    BT_NameState = BT_NAME_OK;
+                }
+                else
+                {
+                    BT_NameState = BT_NAME_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_NameStatus = BT_HCI_CmdStatus;
+                BT_NameState = BT_NAME_ERROR;
+            }
+            break;
+
+        case BT_NAME_OK:
+        case BT_NAME_ERROR:
+        default:
+            break;
+    }
+}
+
+/* ------------------------------------------------------------- */
+/* Bluetooth scan configuration                                  */
+/* ------------------------------------------------------------- */
 
 static void BT_ProcessScanConfiguration(void)
 {
@@ -711,12 +841,10 @@ static void BT_ProcessScanConfiguration(void)
     switch (BT_ScanState)
     {
         case BT_SCAN_WAIT_READY:
-
             if (BT_InitState != BT_INIT_READY) { break; }
-						if (BT_NameState == BT_NAME_ERROR) { BT_ScanState = BT_SCAN_ERROR; break; }
-						if (BT_NameState != BT_NAME_OK) { break; }
+            if (BT_NameState == BT_NAME_ERROR) { BT_ScanState = BT_SCAN_ERROR; break; }
+            if (BT_NameState != BT_NAME_OK) { break; }
 
-            /* Bit 37 indicates BR/EDR is not supported. */
             if ((BT_LocalFeatures[4] & 0x20U) != 0U)
             {
                 BT_ScanState = BT_SCAN_UNSUPPORTED;
@@ -727,15 +855,12 @@ static void BT_ProcessScanConfiguration(void)
             break;
 
         case BT_SCAN_WRITE_SEND:
-
             status = BT_HCI_SendCommand(0x0C1AU, &BT_DesiredScanMode, 1U);
-
             if (status == USBH_OK) { BT_ScanState = BT_SCAN_WRITE_WAIT; }
             else if (status == USBH_FAIL) { BT_ScanState = BT_SCAN_ERROR; }
             break;
 
         case BT_SCAN_WRITE_WAIT:
-
             if (BT_HCI_CmdState == BT_HCI_CMD_OK)
             {
                 BT_ScanStatus = BT_HCI_CmdStatus;
@@ -749,15 +874,12 @@ static void BT_ProcessScanConfiguration(void)
             break;
 
         case BT_SCAN_READ_SEND:
-
             status = BT_HCI_SendCommand(0x0C19U, NULL, 0U);
-
             if (status == USBH_OK) { BT_ScanState = BT_SCAN_READ_WAIT; }
             else if (status == USBH_FAIL) { BT_ScanState = BT_SCAN_ERROR; }
             break;
 
         case BT_SCAN_READ_WAIT:
-
             if (BT_HCI_CmdState == BT_HCI_CMD_OK)
             {
                 BT_ScanStatus = BT_HCI_CmdStatus;
@@ -787,6 +909,9 @@ static void BT_ProcessScanConfiguration(void)
     }
 }
 
+/* ------------------------------------------------------------- */
+/* Asynchronous HCI event decoder                                */
+/* ------------------------------------------------------------- */
 
 static void BT_ProcessAsyncEvent(uint32_t length)
 {
@@ -798,19 +923,17 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 
     event_code = BT_EventRxBuffer[0];
 
-    /* Command Complete is handled by the generic HCI engine. */
     if (event_code == BT_HCI_EVT_COMMAND_COMPLETE) { return; }
 
     BT_AsyncEventCount++;
     BT_AsyncLastCode = event_code;
-    BT_AsyncLastLength = (uint8_t)length;
+    BT_AsyncLastLength = (uint16_t)length;
 
     for (i = 0U; i < length; i++) { BT_AsyncLastData[i] = BT_EventRxBuffer[i]; }
 
     switch (event_code)
     {
         case BT_HCI_EVT_COMMAND_STATUS:
-
             if (length == 6U)
             {
                 BT_CommandStatusCount++;
@@ -820,12 +943,10 @@ static void BT_ProcessAsyncEvent(uint32_t length)
             break;
 
         case BT_HCI_EVT_CONNECTION_REQUEST:
-
             if (length == 12U)
             {
                 BT_ConnectionRequestCount++;
 
-                /* Convert BD_ADDR to conventional display order. */
                 for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = BT_EventRxBuffer[7U - i]; }
 
                 BT_RequesterClassOfDevice = (uint32_t)BT_EventRxBuffer[8] | ((uint32_t)BT_EventRxBuffer[9] << 8) | ((uint32_t)BT_EventRxBuffer[10] << 16);
@@ -833,82 +954,98 @@ static void BT_ProcessAsyncEvent(uint32_t length)
             }
             break;
 
+        case BT_HCI_EVT_INQUIRY_COMPLETE:
+            if ((length == 3U) && (BT_EventRxBuffer[1] == 1U))
+            {
+                BT_InquiryCompleteStatus = BT_EventRxBuffer[2];
+                BT_InquiryCompleteSeen = 1U;
+            }
+            break;
+
         case BT_HCI_EVT_CONNECTION_COMPLETE:
-            /* Connection result handling will be implemented later. */
             break;
 
         case BT_HCI_EVT_DISCONNECTION:
-            /* Disconnection handling will be implemented later. */
-            break;
-				
-				case BT_HCI_EVT_INQUIRY_COMPLETE:
-						if ((length == 3U) && (BT_EventRxBuffer[1] == 1U))
-						{
-								BT_InquiryCompleteStatus = BT_EventRxBuffer[2];
-								BT_InquiryCompleteSeen = 1U;
-						}
-
-						break;
-
-        default:
-            /* Preserve event in BT_AsyncLastData for debugging. */
-            break;
-    }
-}
-
-
-static void BT_ProcessLocalName(void)
-{
-    USBH_StatusTypeDef status;
-
-    switch (BT_NameState)
-    {
-        case BT_NAME_WAIT_READY:
-
-            if (BT_InitState == BT_INIT_READY) { BT_NameState = BT_NAME_SEND; }
-            else if (BT_InitState == BT_INIT_ERROR) { BT_NameState = BT_NAME_ERROR; }
             break;
 
-        case BT_NAME_SEND:
-
-            status = BT_HCI_SendCommand(0x0C13U, BT_LocalNamePayload, BT_LOCAL_NAME_BYTES);
-
-            if (status == USBH_OK) { BT_NameState = BT_NAME_WAIT; }
-            else if (status == USBH_FAIL) { BT_NameState = BT_NAME_ERROR; }
-            break;
-
-        case BT_NAME_WAIT:
-
-            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
-            {
-                BT_NameStatus = BT_HCI_CmdStatus;
-
-                if ((BT_HCI_CmdOpcode == 0x0C13U) && (BT_HCI_ResponseLength == 6U) && (BT_HCI_Response[0] == 0x0EU) && (BT_HCI_Response[1] == 0x04U) && (BT_HCI_Response[3] == 0x13U) && (BT_HCI_Response[4] == 0x0CU) && (BT_NameStatus == 0U))
-                {
-                    BT_NameState = BT_NAME_OK;
-                }
-                else
-                {
-                    BT_NameState = BT_NAME_ERROR;
-                }
-            }
-            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
-            {
-                BT_NameStatus = BT_HCI_CmdStatus;
-                BT_NameState = BT_NAME_ERROR;
-            }
-            break;
-
-        case BT_NAME_OK:
-        case BT_NAME_ERROR:
         default:
             break;
     }
 }
-
 
 /* ------------------------------------------------------------- */
-/* USB Host process callback                                     */
+/* Application event callback                                    */
+/* ------------------------------------------------------------- */
+
+__weak void BT_HCI_EventCallback(const uint8_t *event, uint16_t length)
+{
+    (void)event;
+    (void)length;
+}
+
+/* ------------------------------------------------------------- */
+/* HCI event reassembly                                          */
+/* ------------------------------------------------------------- */
+
+static void BT_AppendHCIEventBytes(const uint8_t *data, uint16_t length)
+{
+    uint16_t i;
+    uint16_t complete_length;
+
+    for (i = 0U; i < length; i++)
+    {
+        /* Buffer protection */
+        if (BT_HCI_PartialLength >= BT_EVENT_BUFFER_SIZE)
+        {
+            BT_HCI_AssemblyErrorCount++;
+            BT_HCI_PartialLength = 0U;
+            BT_HCI_ExpectedLength = 0U;
+        }
+
+        /* Append received byte */
+        BT_EventRxBuffer[BT_HCI_PartialLength] = data[i];
+        BT_HCI_PartialLength++;
+
+        /* HCI header received */
+        if (BT_HCI_PartialLength == 2U)
+        {
+            BT_HCI_ExpectedLength = (uint16_t)BT_EventRxBuffer[1] + 2U;
+
+            if (BT_HCI_ExpectedLength > BT_EVENT_BUFFER_SIZE)
+            {
+                BT_HCI_AssemblyErrorCount++;
+                BT_HCI_PartialLength = 0U;
+                BT_HCI_ExpectedLength = 0U;
+                continue;
+            }
+        }
+
+        /* A complete HCI event is available */
+        if ((BT_HCI_ExpectedLength != 0U) && (BT_HCI_PartialLength == BT_HCI_ExpectedLength))
+        {
+            complete_length = BT_HCI_ExpectedLength;
+
+            BT_HCI_CompleteEventCount++;
+            BT_HCI_LastCompleteLength = complete_length;
+            BT_HCI_LastCompleteCode = BT_EventRxBuffer[0];
+
+            /* Decode the assembled event */
+            BT_DecodeHCIEvent(complete_length);
+            BT_DecodeHCICommandStatus(complete_length);
+            BT_ProcessAsyncEvent(complete_length);
+
+            /* Notify the application */
+            BT_HCI_EventCallback(BT_EventRxBuffer, complete_length);
+
+            /* Reset for the next event */
+            BT_HCI_PartialLength = 0U;
+            BT_HCI_ExpectedLength = 0U;
+        }
+    }
+}
+
+/* ------------------------------------------------------------- */
+/* Main USB Host Bluetooth process                               */
 /* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
@@ -921,19 +1058,27 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 
     if (BT_Endpoints.PipesReady == 0U) { return USBH_OK; }
 
+    /* Incomplete HCI event timeout */
+    if ((BT_HCI_PartialLength != 0U) && ((phost->Timer - BT_HCI_PartialTick) >= 1000U))
+    {
+        BT_HCI_AssemblyTimeoutCount++;
+        BT_HCI_PartialLength = 0U;
+        BT_HCI_ExpectedLength = 0U;
+    }
+
     interval = (BT_Endpoints.EventInterval == 0U) ? 1U : BT_Endpoints.EventInterval;
 
     switch (BT_EventRxState)
     {
         case BT_EVENT_RX_SUBMIT:
-            if ((BT_Endpoints.EventInMPS == 0U) || (BT_Endpoints.EventInMPS > BT_EVENT_BUFFER_SIZE))
+            if ((BT_Endpoints.EventInMPS == 0U) || (BT_Endpoints.EventInMPS > BT_EVENT_USB_PACKET_SIZE))
             {
                 BT_EventErrorCount++;
                 BT_EventRxState = BT_EVENT_RX_ERROR;
                 break;
             }
 
-            status = USBH_InterruptReceiveData(phost, BT_EventRxBuffer, (uint8_t)BT_Endpoints.EventInMPS, BT_Endpoints.EventInPipe);
+            status = USBH_InterruptReceiveData(phost, BT_EventUSBPacket, (uint8_t)BT_Endpoints.EventInMPS, BT_Endpoints.EventInPipe);
 
             if (status == USBH_OK)
             {
@@ -955,17 +1100,28 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
             {
                 length = USBH_LL_GetLastXferSize(phost, BT_Endpoints.EventInPipe);
 
-                if (length > BT_EVENT_BUFFER_SIZE) { length = BT_EVENT_BUFFER_SIZE; }
+                if (length > BT_EVENT_USB_PACKET_SIZE)
+                {
+                    BT_EventErrorCount++;
+                    BT_EventRxState = BT_EVENT_RX_ERROR;
+                    break;
+                }
 
+                /* Preserve last raw USB packet */
                 BT_LastEventLength = (uint16_t)length;
 
-                for (i = 0U; i < length; i++) { BT_LastEventData[i] = BT_EventRxBuffer[i]; }
+                for (i = 0U; i < length; i++) { BT_LastEventData[i] = BT_EventUSBPacket[i]; }
 
-								BT_EventPacketCount++;
-								BT_DecodeHCIEvent(length);
-								BT_DecodeHCICommandStatus(length);
-								BT_ProcessAsyncEvent(length);
-								BT_EventLastTick = phost->Timer;
+                BT_EventPacketCount++;
+
+                /* Add received bytes to the HCI reassembler */
+                if (length != 0U)
+                {
+                    BT_HCI_PartialTick = phost->Timer;
+                    BT_AppendHCIEventBytes(BT_EventUSBPacket, (uint16_t)length);
+                }
+
+                BT_EventLastTick = phost->Timer;
                 BT_EventRxState = BT_EVENT_RX_DELAY;
             }
             else if ((urb == USBH_URB_NOTREADY) || (urb == USBH_URB_NYET))
@@ -993,14 +1149,18 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
             break;
     }
 
-		BT_ProcessInitialization();
-		BT_ProcessHCICommand(phost);
-		BT_ProcessLocalName();
-		BT_ProcessScanConfiguration();
-		
-		
+    /* Existing Bluetooth initialization and configuration */
+    BT_ProcessInitialization();
+    BT_ProcessHCICommand(phost);
+    BT_ProcessLocalName();
+    BT_ProcessScanConfiguration();
+
     return USBH_OK;
 }
+
+/* ------------------------------------------------------------- */
+/* Start-of-frame callback                                       */
+/* ------------------------------------------------------------- */
 
 static USBH_StatusTypeDef BT_SOF(USBH_HandleTypeDef *phost)
 {
