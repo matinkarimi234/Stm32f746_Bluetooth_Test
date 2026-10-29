@@ -144,4 +144,26 @@ extern volatile uint8_t BT_ScanState;
 extern volatile uint8_t BT_ScanMode;
 extern volatile uint8_t BT_ScanStatus;
 
+/* Asynchronous HCI events */
+#define BT_HCI_EVT_CONNECTION_COMPLETE  0x03U
+#define BT_HCI_EVT_CONNECTION_REQUEST   0x04U
+#define BT_HCI_EVT_DISCONNECTION        0x05U
+#define BT_HCI_EVT_COMMAND_COMPLETE     0x0EU
+#define BT_HCI_EVT_COMMAND_STATUS       0x0FU
+
+extern volatile uint32_t BT_AsyncEventCount;
+extern volatile uint32_t BT_ConnectionRequestCount;
+extern volatile uint32_t BT_CommandStatusCount;
+
+extern volatile uint8_t BT_AsyncLastCode;
+extern volatile uint8_t BT_AsyncLastLength;
+extern volatile uint8_t BT_AsyncLastData[BT_EVENT_BUFFER_SIZE];
+
+extern volatile uint8_t BT_RequesterBD_ADDR[6];
+extern volatile uint8_t BT_RequesterLinkType;
+extern volatile uint32_t BT_RequesterClassOfDevice;
+
+extern volatile uint8_t BT_LastCommandStatus;
+extern volatile uint16_t BT_LastCommandStatusOpcode;
+
 #endif /* USBH_BLUETOOTH_H */

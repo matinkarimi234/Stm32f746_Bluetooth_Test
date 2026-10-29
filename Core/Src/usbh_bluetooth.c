@@ -60,6 +60,22 @@ volatile uint8_t BT_ScanState = BT_SCAN_WAIT_READY;
 volatile uint8_t BT_ScanMode = 0xFFU;
 volatile uint8_t BT_ScanStatus = 0xFFU;
 
+/* Asynchronous event debugging */
+volatile uint32_t BT_AsyncEventCount = 0U;
+volatile uint32_t BT_ConnectionRequestCount = 0U;
+volatile uint32_t BT_CommandStatusCount = 0U;
+
+volatile uint8_t BT_AsyncLastCode = 0U;
+volatile uint8_t BT_AsyncLastLength = 0U;
+volatile uint8_t BT_AsyncLastData[BT_EVENT_BUFFER_SIZE];
+
+volatile uint8_t BT_RequesterBD_ADDR[6];
+volatile uint8_t BT_RequesterLinkType = 0xFFU;
+volatile uint32_t BT_RequesterClassOfDevice = 0U;
+
+volatile uint8_t BT_LastCommandStatus = 0xFFU;
+volatile uint16_t BT_LastCommandStatusOpcode = 0U;
+
 static const uint8_t BT_DesiredScanMode = 0x03U;
 
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost);
@@ -93,6 +109,27 @@ static void BT_ClearEndpoints(void)
     BT_Endpoints.ACLInPipe = 0xFFU;
     BT_Endpoints.ACLOutPipe = 0xFFU;
     BT_Endpoints.PipesReady = 0U;
+}
+
+static void BT_ResetAsyncEvents(void)
+{
+    uint16_t i;
+
+    BT_AsyncEventCount = 0U;
+    BT_ConnectionRequestCount = 0U;
+    BT_CommandStatusCount = 0U;
+
+    BT_AsyncLastCode = 0U;
+    BT_AsyncLastLength = 0U;
+
+    BT_RequesterLinkType = 0xFFU;
+    BT_RequesterClassOfDevice = 0U;
+
+    BT_LastCommandStatus = 0xFFU;
+    BT_LastCommandStatusOpcode = 0U;
+
+    for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++) { BT_AsyncLastData[i] = 0U; }
+    for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = 0U; }
 }
 
 static void BT_ResetEventRx(void)
@@ -216,6 +253,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     BT_InterfaceFound = 0U;
     BT_ClearEndpoints();
     BT_ResetEventRx();
+		BT_ResetAsyncEvents();
     BT_ResetHCIState();
     BT_ResetVersionState();
     BT_ResetAddressState();
@@ -303,6 +341,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
     BT_InterfaceFound = 0U;
     BT_ClearEndpoints();
     BT_ResetEventRx();
+		BT_ResetAsyncEvents();
     BT_ResetHCIState();
     BT_ResetVersionState();
     BT_ResetAddressState();
@@ -657,6 +696,66 @@ static void BT_ProcessScanConfiguration(void)
 }
 
 
+static void BT_ProcessAsyncEvent(uint32_t length)
+{
+    uint8_t event_code;
+    uint32_t i;
+
+    if ((length < 2U) || (length > BT_EVENT_BUFFER_SIZE)) { return; }
+    if (((uint32_t)BT_EventRxBuffer[1] + 2U) != length) { return; }
+
+    event_code = BT_EventRxBuffer[0];
+
+    /* Command Complete is handled by the generic HCI engine. */
+    if (event_code == BT_HCI_EVT_COMMAND_COMPLETE) { return; }
+
+    BT_AsyncEventCount++;
+    BT_AsyncLastCode = event_code;
+    BT_AsyncLastLength = (uint8_t)length;
+
+    for (i = 0U; i < length; i++) { BT_AsyncLastData[i] = BT_EventRxBuffer[i]; }
+
+    switch (event_code)
+    {
+        case BT_HCI_EVT_COMMAND_STATUS:
+
+            if (length == 6U)
+            {
+                BT_CommandStatusCount++;
+                BT_LastCommandStatus = BT_EventRxBuffer[2];
+                BT_LastCommandStatusOpcode = (uint16_t)BT_EventRxBuffer[4] | ((uint16_t)BT_EventRxBuffer[5] << 8);
+            }
+            break;
+
+        case BT_HCI_EVT_CONNECTION_REQUEST:
+
+            if (length == 12U)
+            {
+                BT_ConnectionRequestCount++;
+
+                /* Convert BD_ADDR to conventional display order. */
+                for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = BT_EventRxBuffer[7U - i]; }
+
+                BT_RequesterClassOfDevice = (uint32_t)BT_EventRxBuffer[8] | ((uint32_t)BT_EventRxBuffer[9] << 8) | ((uint32_t)BT_EventRxBuffer[10] << 16);
+                BT_RequesterLinkType = BT_EventRxBuffer[11];
+            }
+            break;
+
+        case BT_HCI_EVT_CONNECTION_COMPLETE:
+            /* Connection result handling will be implemented later. */
+            break;
+
+        case BT_HCI_EVT_DISCONNECTION:
+            /* Disconnection handling will be implemented later. */
+            break;
+
+        default:
+            /* Preserve event in BT_AsyncLastData for debugging. */
+            break;
+    }
+}
+
+
 /* ------------------------------------------------------------- */
 /* USB Host process callback                                     */
 /* ------------------------------------------------------------- */
@@ -712,8 +811,9 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
                 for (i = 0U; i < length; i++) { BT_LastEventData[i] = BT_EventRxBuffer[i]; }
 
                 BT_EventPacketCount++;
-                BT_DecodeHCIEvent(length);
-                BT_EventLastTick = phost->Timer;
+								BT_DecodeHCIEvent(length);
+								BT_ProcessAsyncEvent(length);
+								BT_EventLastTick = phost->Timer;
                 BT_EventRxState = BT_EVENT_RX_DELAY;
             }
             else if ((urb == USBH_URB_NOTREADY) || (urb == USBH_URB_NYET))
