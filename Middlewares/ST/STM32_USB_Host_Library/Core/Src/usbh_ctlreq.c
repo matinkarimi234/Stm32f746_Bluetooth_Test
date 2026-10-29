@@ -19,6 +19,11 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usbh_ctlreq.h"
 
+/* Single-host control OUT packet tracking */
+static uint16_t USBH_CtrlOutOffset = 0U;
+static uint16_t USBH_CtrlOutChunk = 0U;
+volatile uint8_t USBH_DebugStatusInURB = 0xFFU;
+
 /** @addtogroup USBH_LIB
   * @{
   */
@@ -738,6 +743,8 @@ static USBH_StatusTypeDef USBH_HandleControl(USBH_HandleTypeDef *phost)
   switch (phost->Control.state)
   {
     case CTRL_SETUP:
+			USBH_CtrlOutOffset = 0U;
+			USBH_CtrlOutChunk = 0U;
       /* send a SETUP packet */
       (void)USBH_CtlSendSetup(phost, (uint8_t *)(void *)phost->Control.setup.d8,
                               phost->Control.pipe_out);
@@ -872,25 +879,49 @@ static USBH_StatusTypeDef USBH_HandleControl(USBH_HandleTypeDef *phost)
       }
       break;
 
-    case CTRL_DATA_OUT:
 
-      (void)USBH_CtlSendData(phost, phost->Control.buff, phost->Control.length,
-                             phost->Control.pipe_out, 1U);
+			case CTRL_DATA_OUT:
+			{
+					uint16_t remaining = phost->Control.length - USBH_CtrlOutOffset;
+					uint16_t max_packet = phost->device.DevDesc.bMaxPacketSize;
 
-      phost->Control.timer = (uint16_t)phost->Timer;
-      phost->Control.state = CTRL_DATA_OUT_WAIT;
-      break;
+					if ((max_packet == 0U) || (remaining == 0U))
+					{
+							phost->Control.state = CTRL_ERROR;
+							break;
+					}
+
+					USBH_CtrlOutChunk = (remaining > max_packet) ? max_packet : remaining;
+
+					/* DATA1, DATA0, DATA1, DATA0 ... */
+					USBH_LL_SetToggle(phost, phost->Control.pipe_out, (uint8_t)(((USBH_CtrlOutOffset / max_packet) & 1U) == 0U ? 1U : 0U));
+
+					(void)USBH_CtlSendData(phost, phost->Control.buff + USBH_CtrlOutOffset, USBH_CtrlOutChunk, phost->Control.pipe_out, 1U);
+
+					phost->Control.timer = (uint16_t)phost->Timer;
+					phost->Control.state = CTRL_DATA_OUT_WAIT;
+					break;
+			}
+
 
     case CTRL_DATA_OUT_WAIT:
 
       URB_Status = USBH_LL_GetURBState(phost, phost->Control.pipe_out);
+		
+			if (URB_Status == USBH_URB_DONE)
+			{
+					USBH_CtrlOutOffset += USBH_CtrlOutChunk;
 
-      if (URB_Status == USBH_URB_DONE)
-      {
-        /* If the Setup Pkt is sent successful, then change the state */
-        phost->Control.state = CTRL_STATUS_IN;
-
-#if (USBH_USE_OS == 1U)
+					if (USBH_CtrlOutOffset < phost->Control.length)
+					{
+							phost->Control.state = CTRL_DATA_OUT;
+					}
+					else
+					{
+							phost->Control.state = CTRL_STATUS_IN;
+					}
+					
+					#if (USBH_USE_OS == 1U)
         phost->os_msg = (uint32_t)USBH_CONTROL_EVENT;
 #if (osCMSIS < 0x20000U)
         (void)osMessagePut(phost->os_event, phost->os_msg, 0U);
@@ -898,7 +929,7 @@ static USBH_StatusTypeDef USBH_HandleControl(USBH_HandleTypeDef *phost)
         (void)osMessageQueuePut(phost->os_event, &phost->os_msg, 0U, 0U);
 #endif
 #endif
-      }
+			}
 
       /* handle error cases */
       else if (URB_Status == USBH_URB_STALL)
@@ -950,18 +981,17 @@ static USBH_StatusTypeDef USBH_HandleControl(USBH_HandleTypeDef *phost)
       }
       break;
 
-    case CTRL_STATUS_IN:
-      /* Send 0 bytes out packet */
-      (void)USBH_CtlReceiveData(phost, NULL, 0U, phost->Control.pipe_in);
 
+    case CTRL_STATUS_IN:
+      (void)USBH_CtlReceiveData(phost, NULL, 0U, phost->Control.pipe_in);
       phost->Control.timer = (uint16_t)phost->Timer;
       phost->Control.state = CTRL_STATUS_IN_WAIT;
-
       break;
 
     case CTRL_STATUS_IN_WAIT:
 
       URB_Status = USBH_LL_GetURBState(phost, phost->Control.pipe_in);
+			USBH_DebugStatusInURB = (uint8_t)URB_Status;
 
       if (URB_Status == USBH_URB_DONE)
       {
@@ -1116,7 +1146,3 @@ static USBH_StatusTypeDef USBH_HandleControl(USBH_HandleTypeDef *phost)
 /**
   * @}
   */
-
-
-
-
