@@ -77,7 +77,7 @@
 #define BT_SCAN_UNSUPPORTED                7U
 
 /* Local Bluetooth name */
-#define BT_DEVICE_NAME                     "PreciTest-Bluetooth"
+#define BT_DEVICE_NAME                     "Resistivity Meter"
 #define BT_LOCAL_NAME_BYTES                248U
 #define BT_NAME_WAIT_READY                 0U
 #define BT_NAME_SEND                       1U
@@ -212,5 +212,35 @@ extern volatile uint32_t BT_DebugOutURBCount[6];
 /* Public functions */
 USBH_StatusTypeDef BT_HCI_SendCommand(uint16_t opcode, const uint8_t *params, uint8_t length);
 void BT_HCI_EventCallback(const uint8_t *event, uint16_t length);
+
+
+/* Step 15: Bluetooth ACL connection management */
+#define BT_HCI_ACCEPT_CONNECTION_OPCODE  0x0409U
+
+#define BT_CONN_IDLE                     0U
+#define BT_CONN_ACCEPT_SEND              1U
+#define BT_CONN_ACCEPT_WAIT              2U
+#define BT_CONN_WAIT_COMPLETE            3U
+#define BT_CONN_CONNECTED                4U
+#define BT_CONN_FAILED                   5U
+
+#define BT_CONN_COMPLETE_TIMEOUT_MS      30000U
+
+/* Development only: automatically accept incoming ACL requests */
+#define BT_AUTO_ACCEPT_CONNECTIONS       1U
+
+extern volatile uint8_t BT_ConnState;
+extern volatile uint8_t BT_Connected;
+extern volatile uint8_t BT_ConnAcceptStatus;
+extern volatile uint8_t BT_ConnCompleteSeen;
+extern volatile uint8_t BT_ConnCompleteStatus;
+extern volatile uint16_t BT_ConnectionHandle;
+extern volatile uint8_t BT_RemoteBD_ADDR[6];
+extern volatile uint8_t BT_ConnectionLinkType;
+extern volatile uint8_t BT_ConnectionEncrypted;
+extern volatile uint8_t BT_DisconnectReason;
+extern volatile uint32_t BT_ConnectionCount;
+extern volatile uint32_t BT_DisconnectionCount;
+
 
 #endif /* USBH_BLUETOOTH_H */

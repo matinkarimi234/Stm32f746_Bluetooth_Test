@@ -133,6 +133,30 @@ volatile uint16_t BT_LastCommandStatusOpcode = 0U;
 volatile uint8_t BT_InquiryCompleteSeen = 0U;
 volatile uint8_t BT_InquiryCompleteStatus = 0xFFU;
 
+
+/* Bluetooth connection management */
+
+volatile uint8_t BT_ConnState = BT_CONN_IDLE;
+volatile uint8_t BT_Connected = 0U;
+
+volatile uint8_t BT_ConnAcceptStatus = 0xFFU;
+volatile uint8_t BT_ConnCompleteSeen = 0U;
+volatile uint8_t BT_ConnCompleteStatus = 0xFFU;
+
+volatile uint16_t BT_ConnectionHandle = 0xFFFFU;
+volatile uint8_t BT_RemoteBD_ADDR[6] = {0};
+
+volatile uint8_t BT_ConnectionLinkType = 0xFFU;
+volatile uint8_t BT_ConnectionEncrypted = 0U;
+volatile uint8_t BT_DisconnectReason = 0xFFU;
+
+volatile uint32_t BT_ConnectionCount = 0U;
+volatile uint32_t BT_DisconnectionCount = 0U;
+
+static uint8_t BT_ConnAcceptParams[7] = {0};
+static uint32_t BT_ConnStartTick = 0U;
+
+
 /* ------------------------------------------------------------- */
 /* USB debugging variables                                       */
 /* ------------------------------------------------------------- */
@@ -336,6 +360,32 @@ static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
     BT_Endpoints.PipesReady = 0U;
 }
 
+
+static void BT_ResetConnectionState(void)
+{
+    uint8_t i;
+
+    BT_ConnState = BT_CONN_IDLE;
+    BT_Connected = 0U;
+
+    BT_ConnAcceptStatus = 0xFFU;
+    BT_ConnCompleteSeen = 0U;
+    BT_ConnCompleteStatus = 0xFFU;
+
+    BT_ConnectionHandle = 0xFFFFU;
+    BT_ConnectionLinkType = 0xFFU;
+    BT_ConnectionEncrypted = 0U;
+    BT_DisconnectReason = 0xFFU;
+
+    BT_ConnectionCount = 0U;
+    BT_DisconnectionCount = 0U;
+    BT_ConnStartTick = 0U;
+
+    for (i = 0U; i < 6U; i++) { BT_RemoteBD_ADDR[i] = 0U; }
+    for (i = 0U; i < 7U; i++) { BT_ConnAcceptParams[i] = 0U; }
+}
+
+
 /* ------------------------------------------------------------- */
 /* USB Bluetooth class initialization                            */
 /* ------------------------------------------------------------- */
@@ -360,6 +410,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     BT_ResetVersionState();
     BT_ResetAddressState();
     BT_ResetGenericCommand();
+		BT_ResetConnectionState();
 
     interface = USBH_FindInterface(phost, USB_BT_CLASS, USB_BT_SUBCLASS, USB_BT_PROTOCOL);
 
@@ -448,6 +499,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
     BT_ResetVersionState();
     BT_ResetAddressState();
     BT_ResetGenericCommand();
+		BT_ResetConnectionState();
 
     return USBH_OK;
 }
@@ -942,17 +994,37 @@ static void BT_ProcessAsyncEvent(uint32_t length)
             }
             break;
 
-        case BT_HCI_EVT_CONNECTION_REQUEST:
-            if (length == 12U)
-            {
-                BT_ConnectionRequestCount++;
+				case BT_HCI_EVT_CONNECTION_REQUEST:
 
-                for (i = 0U; i < 6U; i++) { BT_RequesterBD_ADDR[i] = BT_EventRxBuffer[7U - i]; }
+						if ((length == 12U) && (BT_EventRxBuffer[1] == 10U))
+						{
+								BT_ConnectionRequestCount++;
 
-                BT_RequesterClassOfDevice = (uint32_t)BT_EventRxBuffer[8] | ((uint32_t)BT_EventRxBuffer[9] << 8) | ((uint32_t)BT_EventRxBuffer[10] << 16);
-                BT_RequesterLinkType = BT_EventRxBuffer[11];
-            }
-            break;
+								/* Store requester information for debugging */
+								BT_RequesterClassOfDevice = (uint32_t)BT_EventRxBuffer[8] | ((uint32_t)BT_EventRxBuffer[9] << 8) | ((uint32_t)BT_EventRxBuffer[10] << 16);
+								BT_RequesterLinkType = BT_EventRxBuffer[11];
+
+								/* Accept only ACL requests in this first implementation */
+								if ((BT_AUTO_ACCEPT_CONNECTIONS == 1U) && (BT_ScanState == BT_SCAN_READY) && ((BT_ConnState == BT_CONN_IDLE) || (BT_ConnState == BT_CONN_FAILED)) && (BT_RequesterLinkType == 0x01U))
+								{
+										for (i = 0U; i < 6U; i++)
+										{
+												BT_RequesterBD_ADDR[i] = BT_EventRxBuffer[7U - i];
+												BT_ConnAcceptParams[i] = BT_EventRxBuffer[2U + i];
+										}
+
+										/* 0x01 = remain peripheral, no role switch */
+										BT_ConnAcceptParams[6] = 0x01U;
+
+										BT_ConnAcceptStatus = 0xFFU;
+										BT_ConnCompleteStatus = 0xFFU;
+										BT_ConnCompleteSeen = 0U;
+
+										BT_ConnState = BT_CONN_ACCEPT_SEND;
+								}
+						}
+
+						break;
 
         case BT_HCI_EVT_INQUIRY_COMPLETE:
             if ((length == 3U) && (BT_EventRxBuffer[1] == 1U))
@@ -962,11 +1034,60 @@ static void BT_ProcessAsyncEvent(uint32_t length)
             }
             break;
 
-        case BT_HCI_EVT_CONNECTION_COMPLETE:
-            break;
 
-        case BT_HCI_EVT_DISCONNECTION:
-            break;
+				case BT_HCI_EVT_CONNECTION_COMPLETE:
+
+						if ((length == 13U) && (BT_EventRxBuffer[1] == 11U))
+						{
+								uint8_t address_matches = 1U;
+
+								if ((BT_ConnState != BT_CONN_ACCEPT_WAIT) && (BT_ConnState != BT_CONN_WAIT_COMPLETE)) { break; }
+
+								for (i = 0U; i < 6U; i++)
+								{
+										if (BT_EventRxBuffer[10U - i] != BT_RequesterBD_ADDR[i]) { address_matches = 0U; }
+								}
+
+								if (address_matches == 0U) { break; }
+
+								BT_ConnCompleteStatus = BT_EventRxBuffer[2];
+								BT_ConnCompleteSeen = 1U;
+
+								if (BT_ConnCompleteStatus == 0U)
+								{
+										BT_ConnectionHandle = ((uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8)) & 0x0FFFU;
+										BT_ConnectionLinkType = BT_EventRxBuffer[11];
+										BT_ConnectionEncrypted = BT_EventRxBuffer[12];
+
+										for (i = 0U; i < 6U; i++) { BT_RemoteBD_ADDR[i] = BT_EventRxBuffer[10U - i]; }
+								}
+						}
+
+						break;
+
+
+
+			case BT_HCI_EVT_DISCONNECTION:
+
+					if ((length == 6U) && (BT_EventRxBuffer[1] == 4U))
+					{
+							uint16_t disconnected_handle = ((uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8)) & 0x0FFFU;
+
+							if ((BT_EventRxBuffer[2] == 0U) && (BT_Connected != 0U) && (disconnected_handle == BT_ConnectionHandle))
+							{
+									BT_DisconnectReason = BT_EventRxBuffer[5];
+									BT_DisconnectionCount++;
+
+									BT_Connected = 0U;
+									BT_ConnectionHandle = 0xFFFFU;
+									BT_ConnectionEncrypted = 0U;
+									BT_ConnCompleteSeen = 0U;
+									BT_ConnState = BT_CONN_IDLE;
+							}
+					}
+
+					break;
+
 
         default:
             break;
@@ -1043,6 +1164,90 @@ static void BT_AppendHCIEventBytes(const uint8_t *data, uint16_t length)
         }
     }
 }
+
+
+static void BT_ProcessConnection(USBH_HandleTypeDef *phost)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_ConnState)
+    {
+        case BT_CONN_IDLE:
+            break;
+
+        case BT_CONN_ACCEPT_SEND:
+
+            status = BT_HCI_SendCommand(BT_HCI_ACCEPT_CONNECTION_OPCODE, BT_ConnAcceptParams, 7U);
+
+            if (status == USBH_OK)
+            {
+                BT_ConnStartTick = phost->Timer;
+                BT_ConnState = BT_CONN_ACCEPT_WAIT;
+            }
+            else if (status == USBH_FAIL)
+            {
+                BT_ConnState = BT_CONN_FAILED;
+            }
+            break;
+
+        case BT_CONN_ACCEPT_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_ConnAcceptStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == BT_HCI_ACCEPT_CONNECTION_OPCODE) && (BT_HCI_CmdReplyEvent == BT_HCI_EVT_COMMAND_STATUS) && (BT_ConnAcceptStatus == 0U))
+                {
+                    BT_ConnStartTick = phost->Timer;
+                    BT_ConnState = BT_CONN_WAIT_COMPLETE;
+                }
+                else
+                {
+                    BT_ConnState = BT_CONN_FAILED;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_ConnAcceptStatus = BT_HCI_CmdStatus;
+                BT_ConnState = BT_CONN_FAILED;
+            }
+            break;
+
+        case BT_CONN_WAIT_COMPLETE:
+
+            if (BT_ConnCompleteSeen != 0U)
+            {
+                if ((BT_ConnCompleteStatus == 0U) && (BT_ConnectionLinkType == 0x01U))
+                {
+                    BT_Connected = 1U;
+                    BT_ConnectionCount++;
+                    BT_ConnState = BT_CONN_CONNECTED;
+                }
+                else
+                {
+                    BT_Connected = 0U;
+                    BT_ConnState = BT_CONN_FAILED;
+                }
+            }
+            else if ((phost->Timer - BT_ConnStartTick) >= BT_CONN_COMPLETE_TIMEOUT_MS)
+            {
+                BT_ConnCompleteStatus = 0xFEU;
+                BT_ConnState = BT_CONN_FAILED;
+            }
+            break;
+
+        case BT_CONN_CONNECTED:
+            break;
+
+        case BT_CONN_FAILED:
+            break;
+
+        default:
+            BT_ConnState = BT_CONN_FAILED;
+            break;
+    }
+}
+
 
 /* ------------------------------------------------------------- */
 /* Main USB Host Bluetooth process                               */
@@ -1150,11 +1355,13 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
     }
 
     /* Existing Bluetooth initialization and configuration */
-    BT_ProcessInitialization();
-    BT_ProcessHCICommand(phost);
-    BT_ProcessLocalName();
-    BT_ProcessScanConfiguration();
-
+		BT_ProcessInitialization();
+		BT_ProcessHCICommand(phost);
+		BT_ProcessLocalName();
+		BT_ProcessScanConfiguration();
+		BT_ProcessConnection(phost);
+		
+		
     return USBH_OK;
 }
 
