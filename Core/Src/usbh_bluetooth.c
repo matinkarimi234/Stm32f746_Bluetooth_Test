@@ -92,6 +92,11 @@ static const uint8_t BT_LocalNamePayload[BT_LOCAL_NAME_BYTES] = BT_DEVICE_NAME;
 volatile uint8_t BT_NameState = BT_NAME_WAIT_READY;
 volatile uint8_t BT_NameStatus = 0xFFU;
 
+volatile uint8_t BT_HCI_CmdReplyEvent = 0U;
+
+volatile uint8_t BT_InquiryCompleteSeen = 0U;
+volatile uint8_t BT_InquiryCompleteStatus = 0xFFU;
+
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_Request(USBH_HandleTypeDef *phost);
@@ -223,6 +228,10 @@ static void BT_ResetGenericCommand(void)
 		
 		BT_NameState = BT_NAME_WAIT_READY;
 		BT_NameStatus = 0xFFU;
+		
+		BT_HCI_CmdReplyEvent = 0U;
+		BT_InquiryCompleteSeen = 0U;
+		BT_InquiryCompleteStatus = 0xFFU;
 }
 
 static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
@@ -397,6 +406,7 @@ static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *pa
     BT_HCI_CmdEventSeen = 0U;
     BT_HCI_CmdStatus = 0xFFU;
     BT_HCI_ResponseLength = 0U;
+		BT_HCI_CmdReplyEvent = 0U;
     BT_HCI_CmdState = BT_HCI_CMD_SEND;
 		BT_HCI_DebugFailStage = 0U;
 		BT_HCI_DebugUSBStatus = 0xFFU;
@@ -663,8 +673,35 @@ static void BT_DecodeHCIEvent(uint32_t length)
         }
     }
 
+    BT_HCI_CmdReplyEvent = BT_HCI_EVT_COMMAND_COMPLETE;
+		BT_HCI_CmdEventSeen = 1U;
+}
+
+
+static void BT_DecodeHCICommandStatus(uint32_t length)
+{
+    uint16_t opcode;
+    uint8_t i;
+
+    if (length != 6U) { return; }
+    if (BT_EventRxBuffer[0] != BT_HCI_EVT_COMMAND_STATUS) { return; }
+    if (BT_EventRxBuffer[1] != 4U) { return; }
+
+    if ((BT_HCI_CmdState != BT_HCI_CMD_USB_WAIT) && (BT_HCI_CmdState != BT_HCI_CMD_EVENT_WAIT)) { return; }
+
+    opcode = (uint16_t)BT_EventRxBuffer[4] | ((uint16_t)BT_EventRxBuffer[5] << 8);
+
+    if (opcode != BT_HCI_CmdOpcode) { return; }
+
+    BT_HCI_CmdStatus = BT_EventRxBuffer[2];
+    BT_HCI_CmdReplyEvent = BT_HCI_EVT_COMMAND_STATUS;
+    BT_HCI_ResponseLength = (uint8_t)length;
+
+    for (i = 0U; i < length; i++) { BT_HCI_Response[i] = BT_EventRxBuffer[i]; }
+
     BT_HCI_CmdEventSeen = 1U;
 }
+
 
 
 static void BT_ProcessScanConfiguration(void)
@@ -803,6 +840,15 @@ static void BT_ProcessAsyncEvent(uint32_t length)
         case BT_HCI_EVT_DISCONNECTION:
             /* Disconnection handling will be implemented later. */
             break;
+				
+				case BT_HCI_EVT_INQUIRY_COMPLETE:
+						if ((length == 3U) && (BT_EventRxBuffer[1] == 1U))
+						{
+								BT_InquiryCompleteStatus = BT_EventRxBuffer[2];
+								BT_InquiryCompleteSeen = 1U;
+						}
+
+						break;
 
         default:
             /* Preserve event in BT_AsyncLastData for debugging. */
@@ -915,8 +961,9 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 
                 for (i = 0U; i < length; i++) { BT_LastEventData[i] = BT_EventRxBuffer[i]; }
 
-                BT_EventPacketCount++;
+								BT_EventPacketCount++;
 								BT_DecodeHCIEvent(length);
+								BT_DecodeHCICommandStatus(length);
 								BT_ProcessAsyncEvent(length);
 								BT_EventLastTick = phost->Timer;
                 BT_EventRxState = BT_EVENT_RX_DELAY;

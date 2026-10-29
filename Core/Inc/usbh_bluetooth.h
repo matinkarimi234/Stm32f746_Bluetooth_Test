@@ -179,4 +179,10 @@ extern volatile uint32_t BT_RequesterClassOfDevice;
 extern volatile uint8_t BT_LastCommandStatus;
 extern volatile uint16_t BT_LastCommandStatusOpcode;
 
+#define BT_HCI_EVT_INQUIRY_COMPLETE 0x01U
+
+extern volatile uint8_t BT_HCI_CmdReplyEvent;
+extern volatile uint8_t BT_InquiryCompleteSeen;
+extern volatile uint8_t BT_InquiryCompleteStatus;
+
 #endif /* USBH_BLUETOOTH_H */
