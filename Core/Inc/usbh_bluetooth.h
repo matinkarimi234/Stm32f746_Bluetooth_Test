@@ -243,4 +243,27 @@ extern volatile uint32_t BT_ConnectionCount;
 extern volatile uint32_t BT_DisconnectionCount;
 
 
+/* Step 16A: Secure Simple Pairing configuration */
+
+#define BT_HCI_SET_EVENT_MASK_OPCODE     0x0C01U
+#define BT_HCI_WRITE_SSP_OPCODE          0x0C56U
+#define BT_HCI_READ_SSP_OPCODE           0x0C55U
+
+#define BT_SSP_WAIT_NAME                 0U
+#define BT_SSP_MASK_SEND                 1U
+#define BT_SSP_MASK_WAIT                 2U
+#define BT_SSP_ENABLE_SEND               3U
+#define BT_SSP_ENABLE_WAIT               4U
+#define BT_SSP_READ_SEND                 5U
+#define BT_SSP_READ_WAIT                 6U
+#define BT_SSP_READY                     7U
+#define BT_SSP_ERROR                     8U
+#define BT_SSP_UNSUPPORTED               9U
+
+extern volatile uint8_t BT_SSPState;
+extern volatile uint8_t BT_SSPStatus;
+extern volatile uint8_t BT_SSPMode;
+
+
+
 #endif /* USBH_BLUETOOTH_H */

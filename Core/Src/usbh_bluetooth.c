@@ -111,6 +111,19 @@ volatile uint8_t BT_ScanState = BT_SCAN_WAIT_READY;
 volatile uint8_t BT_ScanMode = 0xFFU;
 volatile uint8_t BT_ScanStatus = 0xFFU;
 
+
+/* Secure Simple Pairing configuration */
+
+volatile uint8_t BT_SSPState = BT_SSP_WAIT_NAME;
+volatile uint8_t BT_SSPStatus = 0xFFU;
+volatile uint8_t BT_SSPMode = 0xFFU;
+
+static const uint8_t BT_SSPEnableParameter = 0x01U;
+
+/* HCI event mask, little-endian, enabling BR/EDR security events */
+static const uint8_t BT_SSPEventMask[8] = {0xFFU, 0xFFU, 0xFBU, 0xFFU, 0x07U, 0xF8U, 0x3FU, 0x00U};
+
+
 /* ------------------------------------------------------------- */
 /* Asynchronous event information                                */
 /* ------------------------------------------------------------- */
@@ -323,6 +336,10 @@ static void BT_ResetGenericCommand(void)
     BT_HCI_DebugControlState = 0xFFU;
     BT_HCI_DebugUSBCompleted = 0U;
     BT_DebugOutURB = 0xFFU;
+		
+		BT_SSPState = BT_SSP_WAIT_NAME;
+		BT_SSPStatus = 0xFFU;
+		BT_SSPMode = 0xFFU;
 
     for (i = 0U; i < 8U; i++) { BT_LocalFeatures[i] = 0U; }
     for (i = 0U; i < sizeof(BT_HCI_CmdBuffer); i++) { BT_HCI_CmdBuffer[i] = 0U; }
@@ -896,6 +913,9 @@ static void BT_ProcessScanConfiguration(void)
             if (BT_InitState != BT_INIT_READY) { break; }
             if (BT_NameState == BT_NAME_ERROR) { BT_ScanState = BT_SCAN_ERROR; break; }
             if (BT_NameState != BT_NAME_OK) { break; }
+						if (BT_SSPState == BT_SSP_ERROR) { BT_ScanState = BT_SCAN_ERROR; break; }
+						if (BT_SSPState == BT_SSP_UNSUPPORTED) { BT_ScanState = BT_SCAN_UNSUPPORTED; break; }
+						if (BT_SSPState != BT_SSP_READY) { break; }
 
             if ((BT_LocalFeatures[4] & 0x20U) != 0U)
             {
@@ -1249,6 +1269,133 @@ static void BT_ProcessConnection(USBH_HandleTypeDef *phost)
 }
 
 
+static void BT_ProcessSSPConfiguration(void)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_SSPState)
+    {
+        case BT_SSP_WAIT_NAME:
+
+            if (BT_NameState == BT_NAME_ERROR)
+            {
+                BT_SSPState = BT_SSP_ERROR;
+                break;
+            }
+
+            if (BT_NameState != BT_NAME_OK) { break; }
+
+            /* Local supported features, byte 6 bit 3 = SSP support */
+            if ((BT_LocalFeatures[6] & 0x08U) == 0U)
+            {
+                BT_SSPState = BT_SSP_UNSUPPORTED;
+                break;
+            }
+
+            BT_SSPState = BT_SSP_MASK_SEND;
+            break;
+
+        case BT_SSP_MASK_SEND:
+
+            status = BT_HCI_SendCommand(BT_HCI_SET_EVENT_MASK_OPCODE, BT_SSPEventMask, 8U);
+
+            if (status == USBH_OK) { BT_SSPState = BT_SSP_MASK_WAIT; }
+            else if (status == USBH_FAIL) { BT_SSPState = BT_SSP_ERROR; }
+            break;
+
+        case BT_SSP_MASK_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == BT_HCI_SET_EVENT_MASK_OPCODE) && (BT_HCI_ResponseLength == 6U) && (BT_HCI_Response[0] == 0x0EU) && (BT_SSPStatus == 0U))
+                {
+                    BT_SSPState = BT_SSP_ENABLE_SEND;
+                }
+                else
+                {
+                    BT_SSPState = BT_SSP_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+                BT_SSPState = BT_SSP_ERROR;
+            }
+            break;
+
+        case BT_SSP_ENABLE_SEND:
+
+            status = BT_HCI_SendCommand(BT_HCI_WRITE_SSP_OPCODE, &BT_SSPEnableParameter, 1U);
+
+            if (status == USBH_OK) { BT_SSPState = BT_SSP_ENABLE_WAIT; }
+            else if (status == USBH_FAIL) { BT_SSPState = BT_SSP_ERROR; }
+            break;
+
+        case BT_SSP_ENABLE_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == BT_HCI_WRITE_SSP_OPCODE) && (BT_HCI_ResponseLength == 6U) && (BT_HCI_Response[0] == 0x0EU) && (BT_SSPStatus == 0U))
+                {
+                    BT_SSPState = BT_SSP_READ_SEND;
+                }
+                else
+                {
+                    BT_SSPState = BT_SSP_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+                BT_SSPState = BT_SSP_ERROR;
+            }
+            break;
+
+        case BT_SSP_READ_SEND:
+
+            status = BT_HCI_SendCommand(BT_HCI_READ_SSP_OPCODE, NULL, 0U);
+
+            if (status == USBH_OK) { BT_SSPState = BT_SSP_READ_WAIT; }
+            else if (status == USBH_FAIL) { BT_SSPState = BT_SSP_ERROR; }
+            break;
+
+        case BT_SSP_READ_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdOpcode == BT_HCI_READ_SSP_OPCODE) && (BT_HCI_ResponseLength == 7U) && (BT_HCI_Response[0] == 0x0EU) && (BT_HCI_Response[3] == 0x55U) && (BT_HCI_Response[4] == 0x0CU) && (BT_SSPStatus == 0U))
+                {
+                    BT_SSPMode = BT_HCI_Response[6];
+                    BT_SSPState = (BT_SSPMode == 0x01U) ? BT_SSP_READY : BT_SSP_ERROR;
+                }
+                else
+                {
+                    BT_SSPState = BT_SSP_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_SSPStatus = BT_HCI_CmdStatus;
+                BT_SSPState = BT_SSP_ERROR;
+            }
+            break;
+
+        case BT_SSP_READY:
+        case BT_SSP_ERROR:
+        case BT_SSP_UNSUPPORTED:
+        default:
+            break;
+    }
+}
+
+
+
 /* ------------------------------------------------------------- */
 /* Main USB Host Bluetooth process                               */
 /* ------------------------------------------------------------- */
@@ -1358,6 +1505,7 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		BT_ProcessInitialization();
 		BT_ProcessHCICommand(phost);
 		BT_ProcessLocalName();
+		BT_ProcessSSPConfiguration();
 		BT_ProcessScanConfiguration();
 		BT_ProcessConnection(phost);
 		
