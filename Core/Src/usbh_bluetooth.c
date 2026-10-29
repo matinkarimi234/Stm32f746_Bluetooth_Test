@@ -55,6 +55,13 @@ volatile uint16_t BT_HCI_CmdOpcode = 0U;
 volatile uint8_t BT_HCI_ResponseLength = 0U;
 volatile uint8_t BT_HCI_Response[BT_HCI_MAX_RESPONSE];
 
+/* Bluetooth discovery configuration */
+volatile uint8_t BT_ScanState = BT_SCAN_WAIT_READY;
+volatile uint8_t BT_ScanMode = 0xFFU;
+volatile uint8_t BT_ScanStatus = 0xFFU;
+
+static const uint8_t BT_DesiredScanMode = 0x03U;
+
 static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost);
 static USBH_StatusTypeDef BT_Request(USBH_HandleTypeDef *phost);
@@ -158,6 +165,10 @@ static void BT_ResetGenericCommand(void)
     for (i = 0U; i < 8U; i++) { BT_LocalFeatures[i] = 0U; }
     for (i = 0U; i < sizeof(BT_HCI_CmdBuffer); i++) { BT_HCI_CmdBuffer[i] = 0U; }
     for (i = 0U; i < BT_HCI_MAX_RESPONSE; i++) { BT_HCI_Response[i] = 0U; }
+		
+		BT_ScanState = BT_SCAN_WAIT_READY;
+		BT_ScanMode = 0xFFU;
+		BT_ScanStatus = 0xFFU;
 }
 
 static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
@@ -563,6 +574,89 @@ static void BT_DecodeHCIEvent(uint32_t length)
     BT_HCI_CmdEventSeen = 1U;
 }
 
+
+static void BT_ProcessScanConfiguration(void)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_ScanState)
+    {
+        case BT_SCAN_WAIT_READY:
+
+            if (BT_InitState != BT_INIT_READY) { break; }
+
+            /* Bit 37 indicates BR/EDR is not supported. */
+            if ((BT_LocalFeatures[4] & 0x20U) != 0U)
+            {
+                BT_ScanState = BT_SCAN_UNSUPPORTED;
+                break;
+            }
+
+            BT_ScanState = BT_SCAN_WRITE_SEND;
+            break;
+
+        case BT_SCAN_WRITE_SEND:
+
+            status = BT_HCI_SendCommand(0x0C1AU, &BT_DesiredScanMode, 1U);
+
+            if (status == USBH_OK) { BT_ScanState = BT_SCAN_WRITE_WAIT; }
+            else if (status == USBH_FAIL) { BT_ScanState = BT_SCAN_ERROR; }
+            break;
+
+        case BT_SCAN_WRITE_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_ScanStatus = BT_HCI_CmdStatus;
+                BT_ScanState = BT_SCAN_READ_SEND;
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_ScanStatus = BT_HCI_CmdStatus;
+                BT_ScanState = BT_SCAN_ERROR;
+            }
+            break;
+
+        case BT_SCAN_READ_SEND:
+
+            status = BT_HCI_SendCommand(0x0C19U, NULL, 0U);
+
+            if (status == USBH_OK) { BT_ScanState = BT_SCAN_READ_WAIT; }
+            else if (status == USBH_FAIL) { BT_ScanState = BT_SCAN_ERROR; }
+            break;
+
+        case BT_SCAN_READ_WAIT:
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_ScanStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_ResponseLength == 7U) && (BT_HCI_Response[0] == 0x0EU) && (BT_HCI_Response[3] == 0x19U) && (BT_HCI_Response[4] == 0x0CU))
+                {
+                    BT_ScanMode = BT_HCI_Response[6];
+                    BT_ScanState = (BT_ScanMode == BT_DesiredScanMode) ? BT_SCAN_READY : BT_SCAN_ERROR;
+                }
+                else
+                {
+                    BT_ScanState = BT_SCAN_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_ScanStatus = BT_HCI_CmdStatus;
+                BT_ScanState = BT_SCAN_ERROR;
+            }
+            break;
+
+        case BT_SCAN_READY:
+        case BT_SCAN_ERROR:
+        case BT_SCAN_UNSUPPORTED:
+        default:
+            break;
+    }
+}
+
+
 /* ------------------------------------------------------------- */
 /* USB Host process callback                                     */
 /* ------------------------------------------------------------- */
@@ -647,8 +741,9 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
             break;
     }
 
-    BT_ProcessInitialization();
-    BT_ProcessHCICommand(phost);
+		BT_ProcessInitialization();
+		BT_ProcessHCICommand(phost);
+		BT_ProcessScanConfiguration();
 
     return USBH_OK;
 }

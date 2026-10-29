@@ -130,4 +130,18 @@ extern volatile uint8_t BT_HCI_Response[BT_HCI_MAX_RESPONSE];
 
 USBH_StatusTypeDef BT_HCI_SendCommand(uint16_t opcode, const uint8_t *params, uint8_t length);
 
+/* Scan configuration states */
+#define BT_SCAN_WAIT_READY      0U
+#define BT_SCAN_WRITE_SEND      1U
+#define BT_SCAN_WRITE_WAIT      2U
+#define BT_SCAN_READ_SEND       3U
+#define BT_SCAN_READ_WAIT       4U
+#define BT_SCAN_READY           5U
+#define BT_SCAN_ERROR           6U
+#define BT_SCAN_UNSUPPORTED     7U
+
+extern volatile uint8_t BT_ScanState;
+extern volatile uint8_t BT_ScanMode;
+extern volatile uint8_t BT_ScanStatus;
+
 #endif /* USBH_BLUETOOTH_H */
