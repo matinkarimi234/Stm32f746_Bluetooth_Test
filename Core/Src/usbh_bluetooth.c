@@ -53,6 +53,23 @@ static uint8_t BT_ReadVersionCmd[3] =
 };
 
 
+volatile uint8_t BT_AddrState = BT_ADDR_WAIT_VERSION;
+volatile uint8_t BT_AddrUSBComplete = 0U;
+volatile uint8_t BT_AddrEventSeen = 0U;
+volatile uint8_t BT_AddrStatus = 0xFFU;
+
+volatile uint8_t BT_BD_ADDR[6] = {0};
+
+static uint32_t BT_AddrStartTick = 0U;
+
+static uint8_t BT_ReadAddressCmd[3] =
+{
+    0x09U,  // Opcode LSB
+    0x10U,  // Opcode MSB
+    0x00U   // Parameter length
+};
+
+
 static void BT_ClearEndpoints(void)
 {
     BT_Endpoints.EventInAddr = 0;
@@ -142,6 +159,22 @@ static void BT_ReleasePipes(USBH_HandleTypeDef *phost, uint8_t close_pipes)
     }
 
     BT_Endpoints.PipesReady = 0U;
+}
+
+static void BT_ResetAddressState(void)
+{
+    uint8_t i;
+
+    BT_AddrState = BT_ADDR_WAIT_VERSION;
+    BT_AddrUSBComplete = 0U;
+    BT_AddrEventSeen = 0U;
+    BT_AddrStatus = 0xFFU;
+    BT_AddrStartTick = 0U;
+
+    for (i = 0; i < 6U; i++)
+    {
+        BT_BD_ADDR[i] = 0U;
+    }
 }
 
 
@@ -315,6 +348,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
 		
 		BT_ResetHCIState();
 		BT_ResetVersionState();
+		BT_ResetAddressState();
 		
     BT_Endpoints.PipesReady = 1U;
 		BT_HCI_ResetState = BT_HCI_RESET_SEND;
@@ -333,6 +367,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
 		BT_ResetEventRx();
 		BT_ResetHCIState();
 		BT_ResetVersionState();
+		BT_ResetAddressState();
 
     return USBH_OK;
 }
@@ -342,6 +377,89 @@ static USBH_StatusTypeDef BT_Request(USBH_HandleTypeDef *phost)
     (void)phost;
     return USBH_OK;
 }
+
+
+static void BT_ProcessReadAddress(USBH_HandleTypeDef *phost)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_AddrState)
+    {
+        case BT_ADDR_WAIT_VERSION:
+
+            if (BT_VersionState == BT_VERSION_OK)
+            {
+                BT_AddrState = BT_ADDR_SEND;
+            }
+            else if (BT_VersionState == BT_VERSION_ERROR)
+            {
+                BT_AddrState = BT_ADDR_ERROR;
+            }
+            break;
+
+        case BT_ADDR_SEND:
+
+            if (phost->RequestState != CMD_SEND)
+                break;
+
+            phost->Control.setup.b.bmRequestType = 0x20U;
+            phost->Control.setup.b.bRequest = 0x00U;
+            phost->Control.setup.b.wValue.w = 0U;
+            phost->Control.setup.b.wIndex.w = 0U;
+            phost->Control.setup.b.wLength.w = 3U;
+
+            BT_AddrStartTick = phost->Timer;
+            BT_AddrState = BT_ADDR_USB_WAIT;
+            break;
+
+        case BT_ADDR_USB_WAIT:
+
+            status = USBH_CtlReq(
+                phost,
+                BT_ReadAddressCmd,
+                sizeof(BT_ReadAddressCmd)
+            );
+
+            if (status == USBH_OK)
+            {
+                BT_AddrUSBComplete = 1U;
+                BT_AddrStartTick = phost->Timer;
+                BT_AddrState = BT_ADDR_EVENT_WAIT;
+            }
+            else if (status != USBH_BUSY)
+            {
+                BT_AddrState = BT_ADDR_ERROR;
+            }
+            else if ((phost->Timer - BT_AddrStartTick)
+                     >= 2000U)
+            {
+                BT_AddrState = BT_ADDR_ERROR;
+            }
+            break;
+
+        case BT_ADDR_EVENT_WAIT:
+
+            if (BT_AddrEventSeen != 0U)
+            {
+                if (BT_AddrStatus == 0U)
+                    BT_AddrState = BT_ADDR_OK;
+                else
+                    BT_AddrState = BT_ADDR_ERROR;
+            }
+            else if ((phost->Timer - BT_AddrStartTick)
+                     >= 2000U)
+            {
+                BT_AddrState = BT_ADDR_ERROR;
+            }
+            break;
+
+        case BT_ADDR_OK:
+        case BT_ADDR_ERROR:
+        default:
+            break;
+    }
+}
+
 
 
 static void BT_ProcessHCIReset(USBH_HandleTypeDef *phost)
@@ -657,6 +775,44 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 
 										BT_VersionEventSeen = 1U;
 								}
+								
+								/* HCI Read BD_ADDR Command Complete
+								 *
+								 * Expected:
+								 * 0E 0A 01 09 10 00 XX XX XX XX XX XX
+								 */
+
+								if ((length >= 6U) &&
+										((BT_AddrState == BT_ADDR_USB_WAIT) ||
+										 (BT_AddrState == BT_ADDR_EVENT_WAIT)) &&
+										(BT_EventRxBuffer[0] == 0x0EU) &&
+										(BT_EventRxBuffer[3] == 0x09U) &&
+										(BT_EventRxBuffer[4] == 0x10U))
+								{
+										BT_AddrStatus = BT_EventRxBuffer[5];
+
+										if (BT_AddrStatus == 0U)
+										{
+												if ((length == 12U) &&
+														(BT_EventRxBuffer[1] == 0x0AU))
+												{
+														/* Reverse byte order for conventional display */
+														BT_BD_ADDR[0] = BT_EventRxBuffer[11];
+														BT_BD_ADDR[1] = BT_EventRxBuffer[10];
+														BT_BD_ADDR[2] = BT_EventRxBuffer[9];
+														BT_BD_ADDR[3] = BT_EventRxBuffer[8];
+														BT_BD_ADDR[4] = BT_EventRxBuffer[7];
+														BT_BD_ADDR[5] = BT_EventRxBuffer[6];
+												}
+												else
+												{
+														BT_AddrStatus = 0xFFU;
+												}
+										}
+
+										BT_AddrEventSeen = 1U;
+								}
+
 
             }
             else if ((urb == USBH_URB_NOTREADY) ||
@@ -707,6 +863,7 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		
 		BT_ProcessHCIReset(phost);
 		BT_ProcessReadVersion(phost);
+		BT_ProcessReadAddress(phost);
 		
     return USBH_OK;
 }

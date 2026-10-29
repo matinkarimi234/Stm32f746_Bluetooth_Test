@@ -94,4 +94,20 @@ extern volatile uint8_t BT_VersionEventSeen;
 extern volatile uint8_t BT_VersionStatus;
 
 
+/* Bluetooth Device Address states */
+#define BT_ADDR_WAIT_VERSION  0U
+#define BT_ADDR_SEND          1U
+#define BT_ADDR_USB_WAIT      2U
+#define BT_ADDR_EVENT_WAIT    3U
+#define BT_ADDR_OK            4U
+#define BT_ADDR_ERROR         5U
+
+extern volatile uint8_t BT_AddrState;
+extern volatile uint8_t BT_AddrUSBComplete;
+extern volatile uint8_t BT_AddrEventSeen;
+extern volatile uint8_t BT_AddrStatus;
+
+/* Bluetooth address, most significant byte first */
+extern volatile uint8_t BT_BD_ADDR[6];
+
 #endif
