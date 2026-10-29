@@ -1,3 +1,4 @@
+
 #ifndef USBH_BLUETOOTH_H
 #define USBH_BLUETOOTH_H
 
@@ -29,10 +30,10 @@
 
 #define BT_ADDR_WAIT_VERSION          0U
 #define BT_ADDR_SEND                  1U
-#define BT_ADDR_USB_WAIT             2U
-#define BT_ADDR_EVENT_WAIT           3U
-#define BT_ADDR_OK                   4U
-#define BT_ADDR_ERROR                5U
+#define BT_ADDR_USB_WAIT              2U
+#define BT_ADDR_EVENT_WAIT            3U
+#define BT_ADDR_OK                    4U
+#define BT_ADDR_ERROR                 5U
 
 #define BT_HCI_MAX_CMD_PARAMS         32U
 #define BT_HCI_MAX_RESPONSE           64U
@@ -42,6 +43,19 @@
 #define BT_HCI_CMD_EVENT_WAIT         3U
 #define BT_HCI_CMD_OK                 4U
 #define BT_HCI_CMD_ERROR              5U
+
+/* Initialization sequence */
+#define BT_INIT_IDLE                  0U
+#define BT_INIT_RESET_SEND            1U
+#define BT_INIT_RESET_WAIT            2U
+#define BT_INIT_VERSION_SEND          3U
+#define BT_INIT_VERSION_WAIT          4U
+#define BT_INIT_ADDRESS_SEND          5U
+#define BT_INIT_ADDRESS_WAIT          6U
+#define BT_INIT_FEATURES_SEND         7U
+#define BT_INIT_FEATURES_WAIT         8U
+#define BT_INIT_READY                 9U
+#define BT_INIT_ERROR                 10U
 
 typedef struct
 {
@@ -72,6 +86,7 @@ extern USBH_ClassTypeDef USBH_Bluetooth_Class;
 extern volatile uint8_t BT_InterfaceFound;
 extern volatile BT_EndpointInfo_t BT_Endpoints;
 
+/* USB event reception */
 extern volatile uint8_t BT_EventRxState;
 extern volatile uint32_t BT_EventSubmitCount;
 extern volatile uint32_t BT_EventPacketCount;
@@ -80,23 +95,32 @@ extern volatile uint32_t BT_EventErrorCount;
 extern volatile uint16_t BT_LastEventLength;
 extern volatile uint8_t BT_LastEventData[BT_EVENT_BUFFER_SIZE];
 
+/* HCI Reset results */
 extern volatile uint8_t BT_HCI_ResetState;
 extern volatile uint8_t BT_HCI_ResetUSBComplete;
 extern volatile uint8_t BT_HCI_ResetEventSeen;
 extern volatile uint8_t BT_HCI_ResetStatus;
 
+/* Local Version results */
 extern volatile BT_VersionInfo_t BT_VersionInfo;
 extern volatile uint8_t BT_VersionState;
 extern volatile uint8_t BT_VersionUSBComplete;
 extern volatile uint8_t BT_VersionEventSeen;
 extern volatile uint8_t BT_VersionStatus;
 
+/* Bluetooth address results */
 extern volatile uint8_t BT_AddrState;
 extern volatile uint8_t BT_AddrUSBComplete;
 extern volatile uint8_t BT_AddrEventSeen;
 extern volatile uint8_t BT_AddrStatus;
 extern volatile uint8_t BT_BD_ADDR[6];
 
+/* Unified initialization */
+extern volatile uint8_t BT_InitState;
+extern volatile uint16_t BT_InitErrorOpcode;
+extern volatile uint8_t BT_LocalFeatures[8];
+
+/* Generic HCI command engine */
 extern volatile uint8_t BT_HCI_CmdState;
 extern volatile uint8_t BT_HCI_CmdEventSeen;
 extern volatile uint8_t BT_HCI_CmdStatus;
