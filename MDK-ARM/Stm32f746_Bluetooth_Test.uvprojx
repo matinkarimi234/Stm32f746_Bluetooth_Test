@@ -418,6 +418,11 @@
               <FileType>1</FileType>
               <FilePath>..\Core\Src\usbh_bluetooth.c</FilePath>
             </File>
+            <File>
+              <FileName>bt_hci_trace.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\bt_hci_trace.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

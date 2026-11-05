@@ -266,4 +266,72 @@ extern volatile uint8_t BT_SSPMode;
 
 
 
+/* Step 16B: Bluetooth SSP pairing */
+
+/* Development-only automatic Just Works confirmation */
+#define BT_PAIRING_TEST_MODE             1U
+
+/* HCI pairing events */
+#define BT_HCI_EVT_PIN_CODE_REQUEST      0x16U
+#define BT_HCI_EVT_LINK_KEY_REQUEST      0x17U
+#define BT_HCI_EVT_LINK_KEY_NOTIFICATION 0x18U
+#define BT_HCI_EVT_IO_CAP_REQUEST        0x31U
+#define BT_HCI_EVT_USER_CONFIRM_REQUEST  0x33U
+#define BT_HCI_EVT_USER_PASSKEY_REQUEST  0x34U
+#define BT_HCI_EVT_REMOTE_OOB_REQUEST    0x35U
+#define BT_HCI_EVT_SIMPLE_PAIR_COMPLETE  0x36U
+
+/* HCI pairing commands */
+#define BT_HCI_LINK_KEY_REPLY            0x040BU
+#define BT_HCI_LINK_KEY_NEG_REPLY        0x040CU
+#define BT_HCI_PIN_CODE_NEG_REPLY        0x040EU
+#define BT_HCI_IO_CAP_REPLY              0x042BU
+#define BT_HCI_USER_CONFIRM_REPLY        0x042CU
+#define BT_HCI_USER_CONFIRM_NEG_REPLY    0x042DU
+#define BT_HCI_PASSKEY_NEG_REPLY         0x042FU
+#define BT_HCI_REMOTE_OOB_NEG_REPLY      0x0433U
+#define BT_HCI_IO_CAP_NEG_REPLY          0x0434U
+
+/* Pairing command states */
+#define BT_PAIR_IDLE                     0U
+#define BT_PAIR_SEND                     1U
+#define BT_PAIR_WAIT                     2U
+
+extern volatile uint8_t BT_PairCmdState;
+extern volatile uint8_t BT_PairCompleteSeen;
+extern volatile uint8_t BT_PairCompleteStatus;
+extern volatile uint8_t BT_PairLinkKeyValid;
+extern volatile uint8_t BT_PairLinkKeyType;
+extern volatile uint8_t BT_PairLastCommandStatus;
+
+extern volatile uint16_t BT_PairLastOpcode;
+extern volatile uint32_t BT_PairEventCount;
+extern volatile uint32_t BT_PairReplyCount;
+extern volatile uint32_t BT_PairErrorCount;
+extern volatile uint32_t BT_PairDroppedCount;
+
+
+/* Authentication test */
+#define BT_AUTO_AUTH_TEST             0U
+#define BT_HCI_AUTH_REQUEST_OPCODE    0x0411U
+#define BT_HCI_EVT_AUTH_COMPLETE      0x06U
+
+#define BT_AUTH_IDLE                  0U
+#define BT_AUTH_SEND                  1U
+#define BT_AUTH_CMD_WAIT              2U
+#define BT_AUTH_RESULT_WAIT           3U
+#define BT_AUTH_OK                    4U
+#define BT_AUTH_ERROR                 5U
+
+#define BT_AUTH_TIMEOUT_MS            30000U
+
+extern volatile uint8_t BT_AuthState;
+extern volatile uint8_t BT_AuthCmdStatus;
+extern volatile uint8_t BT_AuthCompleteSeen;
+extern volatile uint8_t BT_AuthCompleteStatus;
+extern volatile uint32_t BT_AuthCompleteCount;
+
+
+
+
 #endif /* USBH_BLUETOOTH_H */

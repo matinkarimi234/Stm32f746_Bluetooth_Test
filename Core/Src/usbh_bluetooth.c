@@ -124,6 +124,32 @@ static const uint8_t BT_SSPEnableParameter = 0x01U;
 static const uint8_t BT_SSPEventMask[8] = {0xFFU, 0xFFU, 0xFBU, 0xFFU, 0x07U, 0xF8U, 0x3FU, 0x00U};
 
 
+/* SSP pairing management */
+
+volatile uint8_t BT_PairCmdState = BT_PAIR_IDLE;
+volatile uint8_t BT_PairCompleteSeen = 0U;
+volatile uint8_t BT_PairCompleteStatus = 0xFFU;
+volatile uint8_t BT_PairLinkKeyValid = 0U;
+volatile uint8_t BT_PairLinkKeyType = 0xFFU;
+volatile uint8_t BT_PairLastCommandStatus = 0xFFU;
+
+volatile uint16_t BT_PairLastOpcode = 0U;
+volatile uint32_t BT_PairEventCount = 0U;
+volatile uint32_t BT_PairReplyCount = 0U;
+volatile uint32_t BT_PairErrorCount = 0U;
+volatile uint32_t BT_PairDroppedCount = 0U;
+
+/* Pairing reply parameters */
+static uint8_t BT_PairCmdParams[22];
+static uint8_t BT_PairCmdLength = 0U;
+static uint16_t BT_PairCmdOpcode = 0U;
+
+/* RAM-only bond storage; never print or expose the key */
+static uint8_t BT_PairLinkKey[16];
+static uint8_t BT_PairBondAddress[6];
+
+
+
 /* ------------------------------------------------------------- */
 /* Asynchronous event information                                */
 /* ------------------------------------------------------------- */
@@ -180,6 +206,18 @@ volatile uint8_t BT_HCI_DebugControlState = 0xFFU;
 volatile uint8_t BT_HCI_DebugUSBCompleted = 0U;
 volatile uint8_t BT_DebugOutURB = 0xFFU;
 volatile uint32_t BT_DebugOutURBCount[6] = {0U};
+
+
+
+volatile uint8_t BT_AuthState = BT_AUTH_IDLE;
+volatile uint8_t BT_AuthCmdStatus = 0xFFU;
+volatile uint8_t BT_AuthCompleteSeen = 0U;
+volatile uint8_t BT_AuthCompleteStatus = 0xFFU;
+volatile uint32_t BT_AuthCompleteCount = 0U;
+
+static uint32_t BT_AuthStartTick = 0U;
+static uint8_t BT_AuthParams[2];
+
 
 /* ------------------------------------------------------------- */
 /* Function declarations                                         */
@@ -347,6 +385,19 @@ static void BT_ResetGenericCommand(void)
     for (i = 0U; i < 6U; i++) { BT_DebugOutURBCount[i] = 0U; }
 }
 
+
+static void BT_ResetAuthentication(void)
+{
+    BT_AuthState = BT_AUTH_IDLE;
+    BT_AuthCmdStatus = 0xFFU;
+    BT_AuthCompleteSeen = 0U;
+    BT_AuthCompleteStatus = 0xFFU;
+    BT_AuthCompleteCount = 0U;
+    BT_AuthStartTick = 0U;
+    BT_AuthParams[0] = 0U;
+    BT_AuthParams[1] = 0U;
+}
+
 /* ------------------------------------------------------------- */
 /* USB pipe management                                           */
 /* ------------------------------------------------------------- */
@@ -403,6 +454,33 @@ static void BT_ResetConnectionState(void)
 }
 
 
+static void BT_ResetPairing(void)
+{
+    uint8_t i;
+
+    BT_PairCmdState = BT_PAIR_IDLE;
+    BT_PairCompleteSeen = 0U;
+    BT_PairCompleteStatus = 0xFFU;
+    BT_PairLinkKeyValid = 0U;
+    BT_PairLinkKeyType = 0xFFU;
+    BT_PairLastCommandStatus = 0xFFU;
+    BT_PairLastOpcode = 0U;
+
+    BT_PairEventCount = 0U;
+    BT_PairReplyCount = 0U;
+    BT_PairErrorCount = 0U;
+    BT_PairDroppedCount = 0U;
+
+    BT_PairCmdLength = 0U;
+    BT_PairCmdOpcode = 0U;
+
+    for (i = 0U; i < 22U; i++) { BT_PairCmdParams[i] = 0U; }
+    for (i = 0U; i < 16U; i++) { BT_PairLinkKey[i] = 0U; }
+    for (i = 0U; i < 6U; i++) { BT_PairBondAddress[i] = 0U; }
+}
+
+
+
 /* ------------------------------------------------------------- */
 /* USB Bluetooth class initialization                            */
 /* ------------------------------------------------------------- */
@@ -428,6 +506,8 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     BT_ResetAddressState();
     BT_ResetGenericCommand();
 		BT_ResetConnectionState();
+		BT_ResetPairing();
+		BT_ResetAuthentication();
 
     interface = USBH_FindInterface(phost, USB_BT_CLASS, USB_BT_SUBCLASS, USB_BT_PROTOCOL);
 
@@ -517,6 +597,8 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
     BT_ResetAddressState();
     BT_ResetGenericCommand();
 		BT_ResetConnectionState();
+		BT_ResetPairing();
+		BT_ResetAuthentication();
 
     return USBH_OK;
 }
@@ -981,6 +1063,46 @@ static void BT_ProcessScanConfiguration(void)
     }
 }
 
+
+static uint8_t BT_PairPeerMatches(const uint8_t *hci_address)
+{
+    uint8_t i;
+
+    if ((BT_ConnState != BT_CONN_ACCEPT_WAIT) && (BT_ConnState != BT_CONN_WAIT_COMPLETE) && (BT_ConnState != BT_CONN_CONNECTED)) { return 0U; }
+
+    for (i = 0U; i < 6U; i++)
+    {
+        if (hci_address[i] != BT_RequesterBD_ADDR[5U - i]) { return 0U; }
+    }
+
+    return 1U;
+}
+
+
+
+static uint8_t BT_QueuePairReply(uint16_t opcode, const uint8_t *address, const uint8_t *extra, uint8_t extra_length)
+{
+    uint8_t i;
+
+    if ((address == NULL) || (extra_length > 16U) || ((extra_length != 0U) && (extra == NULL))) { return 0U; }
+
+    if (BT_PairCmdState != BT_PAIR_IDLE)
+    {
+        BT_PairDroppedCount++;
+        return 0U;
+    }
+
+    for (i = 0U; i < 6U; i++) { BT_PairCmdParams[i] = address[i]; }
+    for (i = 0U; i < extra_length; i++) { BT_PairCmdParams[6U + i] = extra[i]; }
+
+    BT_PairCmdLength = 6U + extra_length;
+    BT_PairCmdOpcode = opcode;
+    BT_PairCmdState = BT_PAIR_SEND;
+
+    return 1U;
+}
+
+
 /* ------------------------------------------------------------- */
 /* Asynchronous HCI event decoder                                */
 /* ------------------------------------------------------------- */
@@ -1034,7 +1156,7 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 										}
 
 										/* 0x01 = remain peripheral, no role switch */
-										BT_ConnAcceptParams[6] = 0x01U;
+										BT_ConnAcceptParams[6] = 0x00U;
 
 										BT_ConnAcceptStatus = 0xFFU;
 										BT_ConnCompleteStatus = 0xFFU;
@@ -1053,6 +1175,163 @@ static void BT_ProcessAsyncEvent(uint32_t length)
                 BT_InquiryCompleteSeen = 1U;
             }
             break;
+						
+				
+				
+				case BT_HCI_EVT_LINK_KEY_REQUEST:
+				{
+						uint8_t key_matches = BT_PairLinkKeyValid;
+
+						if (length != 8U) { break; }
+
+						BT_PairEventCount++;
+
+						for (i = 0U; i < 6U; i++)
+						{
+								if (BT_PairBondAddress[i] != BT_EventRxBuffer[2U + i]) { key_matches = 0U; }
+						}
+
+						if ((BT_PairPeerMatches(&BT_EventRxBuffer[2]) != 0U) && (key_matches != 0U))
+						{
+								BT_QueuePairReply(BT_HCI_LINK_KEY_REPLY, &BT_EventRxBuffer[2], BT_PairLinkKey, 16U);
+						}
+						else
+						{
+								BT_QueuePairReply(BT_HCI_LINK_KEY_NEG_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+
+						break;
+				}
+				
+				
+				case BT_HCI_EVT_IO_CAP_REQUEST:
+				{
+						static const uint8_t io_params[3] = {0x03U, 0x00U, 0x04U};
+						static const uint8_t reject_reason = 0x0FU;
+
+						if (length != 8U) { break; }
+
+						BT_PairEventCount++;
+
+						if ((BT_PAIRING_TEST_MODE == 1U) && (BT_PairPeerMatches(&BT_EventRxBuffer[2]) != 0U))
+						{
+								BT_QueuePairReply(BT_HCI_IO_CAP_REPLY, &BT_EventRxBuffer[2], io_params, 3U);
+						}
+						else
+						{
+								BT_QueuePairReply(BT_HCI_IO_CAP_NEG_REPLY, &BT_EventRxBuffer[2], &reject_reason, 1U);
+						}
+
+						break;
+				}
+
+
+				case BT_HCI_EVT_USER_CONFIRM_REQUEST:
+
+						if (length != 12U) { break; }
+
+						BT_PairEventCount++;
+
+						if ((BT_PAIRING_TEST_MODE == 1U) && (BT_PairPeerMatches(&BT_EventRxBuffer[2]) != 0U))
+						{
+								BT_QueuePairReply(BT_HCI_USER_CONFIRM_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+						else
+						{
+								BT_QueuePairReply(BT_HCI_USER_CONFIRM_NEG_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+
+						break;
+						
+						
+
+				case BT_HCI_EVT_PIN_CODE_REQUEST:
+
+						if (length == 8U)
+						{
+								BT_PairEventCount++;
+								BT_QueuePairReply(BT_HCI_PIN_CODE_NEG_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+
+						break;
+
+				case BT_HCI_EVT_USER_PASSKEY_REQUEST:
+
+						if (length == 8U)
+						{
+								BT_PairEventCount++;
+								BT_QueuePairReply(BT_HCI_PASSKEY_NEG_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+
+						break;
+
+				case BT_HCI_EVT_REMOTE_OOB_REQUEST:
+
+						if (length == 8U)
+						{
+								BT_PairEventCount++;
+								BT_QueuePairReply(BT_HCI_REMOTE_OOB_NEG_REPLY, &BT_EventRxBuffer[2], NULL, 0U);
+						}
+
+						break;
+						
+
+				case BT_HCI_EVT_SIMPLE_PAIR_COMPLETE:
+
+						if ((length == 9U) && (BT_PairPeerMatches(&BT_EventRxBuffer[3]) != 0U))
+						{
+								BT_PairEventCount++;
+								BT_PairCompleteStatus = BT_EventRxBuffer[2];
+								BT_PairCompleteSeen = 1U;
+
+								if (BT_PairCompleteStatus != 0U) { BT_PairErrorCount++; }
+						}
+
+						break;
+				
+				case BT_HCI_EVT_AUTH_COMPLETE:
+
+						if ((length == 5U) && (BT_EventRxBuffer[1] == 3U))
+						{
+								uint16_t handle = ((uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8)) & 0x0FFFU;
+
+								if (handle == BT_ConnectionHandle)
+								{
+										BT_AuthCompleteStatus = BT_EventRxBuffer[2];
+										BT_AuthCompleteSeen = 1U;
+										BT_AuthCompleteCount++;
+								}
+						}
+
+						break;
+
+				case BT_HCI_EVT_LINK_KEY_NOTIFICATION:
+
+						if ((length == 25U) && (BT_PAIRING_TEST_MODE == 1U) && (BT_PairPeerMatches(&BT_EventRxBuffer[2]) != 0U))
+						{
+								uint8_t key_type = BT_EventRxBuffer[24];
+
+								BT_PairEventCount++;
+
+								if ((key_type == 0x04U) || (key_type == 0x05U) || (key_type == 0x07U) || (key_type == 0x08U))
+								{
+										for (i = 0U; i < 6U; i++) { BT_PairBondAddress[i] = BT_EventRxBuffer[2U + i]; }
+										for (i = 0U; i < 16U; i++) { BT_PairLinkKey[i] = BT_EventRxBuffer[8U + i]; }
+
+										BT_PairLinkKeyType = key_type;
+										BT_PairLinkKeyValid = 1U;
+								}
+								else
+								{
+										BT_PairLinkKeyValid = 0U;
+										BT_PairErrorCount++;
+								}
+						}
+
+						break;
+
+
+
 
 
 				case BT_HCI_EVT_CONNECTION_COMPLETE:
@@ -1060,8 +1339,6 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 						if ((length == 13U) && (BT_EventRxBuffer[1] == 11U))
 						{
 								uint8_t address_matches = 1U;
-
-								if ((BT_ConnState != BT_CONN_ACCEPT_WAIT) && (BT_ConnState != BT_CONN_WAIT_COMPLETE)) { break; }
 
 								for (i = 0U; i < 6U; i++)
 								{
@@ -1072,7 +1349,9 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 
 								BT_ConnCompleteStatus = BT_EventRxBuffer[2];
 								BT_ConnCompleteSeen = 1U;
-
+								
+								if ((BT_ConnState != BT_CONN_ACCEPT_WAIT) && (BT_ConnState != BT_CONN_WAIT_COMPLETE)) { break; }
+								
 								if (BT_ConnCompleteStatus == 0U)
 								{
 										BT_ConnectionHandle = ((uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8)) & 0x0FFFU;
@@ -1395,6 +1674,150 @@ static void BT_ProcessSSPConfiguration(void)
 }
 
 
+static void BT_ProcessPairing(void)
+{
+    USBH_StatusTypeDef status;
+
+    switch (BT_PairCmdState)
+    {
+        case BT_PAIR_IDLE:
+            break;
+
+        case BT_PAIR_SEND:
+
+            status = BT_HCI_SendCommand(BT_PairCmdOpcode, BT_PairCmdParams, BT_PairCmdLength);
+
+            if (status == USBH_OK)
+            {
+                BT_PairLastOpcode = BT_PairCmdOpcode;
+                BT_PairCmdState = BT_PAIR_WAIT;
+            }
+            else if (status == USBH_FAIL)
+            {
+                BT_PairErrorCount++;
+                BT_PairCmdState = BT_PAIR_IDLE;
+            }
+
+            break;
+
+        case BT_PAIR_WAIT:
+
+            if (BT_HCI_CmdOpcode != BT_PairCmdOpcode) { break; }
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_PairLastCommandStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdReplyEvent == BT_HCI_EVT_COMMAND_COMPLETE) && (BT_HCI_ResponseLength == 12U) && (BT_PairLastCommandStatus == 0U))
+                {
+                    BT_PairReplyCount++;
+                }
+                else
+                {
+                    BT_PairErrorCount++;
+                }
+
+                BT_PairCmdState = BT_PAIR_IDLE;
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_PairLastCommandStatus = BT_HCI_CmdStatus;
+                BT_PairErrorCount++;
+                BT_PairCmdState = BT_PAIR_IDLE;
+            }
+
+            break;
+
+        default:
+            BT_PairCmdState = BT_PAIR_IDLE;
+            BT_PairErrorCount++;
+            break;
+    }
+}
+
+
+static void BT_ProcessAuthentication(USBH_HandleTypeDef *phost)
+{
+    USBH_StatusTypeDef status;
+
+    if (BT_Connected == 0U)
+    {
+        BT_AuthState = BT_AUTH_IDLE;
+        return;
+    }
+
+    switch (BT_AuthState)
+    {
+        case BT_AUTH_IDLE:
+
+            if ((BT_AUTO_AUTH_TEST == 1U) && (BT_SSPState == BT_SSP_READY) && (BT_ConnectionHandle != 0xFFFFU))
+            {
+                BT_AuthState = BT_AUTH_SEND;
+            }
+            break;
+
+        case BT_AUTH_SEND:
+
+            BT_AuthParams[0] = (uint8_t)(BT_ConnectionHandle & 0xFFU);
+            BT_AuthParams[1] = (uint8_t)(BT_ConnectionHandle >> 8);
+
+            status = BT_HCI_SendCommand(BT_HCI_AUTH_REQUEST_OPCODE, BT_AuthParams, 2U);
+
+            if (status == USBH_OK)
+            {
+                BT_AuthStartTick = phost->Timer;
+                BT_AuthState = BT_AUTH_CMD_WAIT;
+            }
+            else if (status == USBH_FAIL)
+            {
+                BT_AuthState = BT_AUTH_ERROR;
+            }
+            break;
+
+        case BT_AUTH_CMD_WAIT:
+
+            if (BT_HCI_CmdOpcode != BT_HCI_AUTH_REQUEST_OPCODE) { break; }
+
+            if (BT_HCI_CmdState == BT_HCI_CMD_OK)
+            {
+                BT_AuthCmdStatus = BT_HCI_CmdStatus;
+
+                if ((BT_HCI_CmdReplyEvent == BT_HCI_EVT_COMMAND_STATUS) && (BT_AuthCmdStatus == 0U))
+                {
+                    BT_AuthState = BT_AUTH_RESULT_WAIT;
+                }
+                else
+                {
+                    BT_AuthState = BT_AUTH_ERROR;
+                }
+            }
+            else if (BT_HCI_CmdState == BT_HCI_CMD_ERROR)
+            {
+                BT_AuthCmdStatus = BT_HCI_CmdStatus;
+                BT_AuthState = BT_AUTH_ERROR;
+            }
+            break;
+
+        case BT_AUTH_RESULT_WAIT:
+
+            if (BT_AuthCompleteSeen != 0U)
+            {
+                BT_AuthState = (BT_AuthCompleteStatus == 0U) ? BT_AUTH_OK : BT_AUTH_ERROR;
+            }
+            else if ((phost->Timer - BT_AuthStartTick) >= BT_AUTH_TIMEOUT_MS)
+            {
+                BT_AuthCompleteStatus = 0xFEU;
+                BT_AuthState = BT_AUTH_ERROR;
+            }
+            break;
+
+        case BT_AUTH_OK:
+        case BT_AUTH_ERROR:
+        default:
+            break;
+    }
+}
+
 
 /* ------------------------------------------------------------- */
 /* Main USB Host Bluetooth process                               */
@@ -1508,6 +1931,8 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		BT_ProcessSSPConfiguration();
 		BT_ProcessScanConfiguration();
 		BT_ProcessConnection(phost);
+		BT_ProcessAuthentication(phost);
+		BT_ProcessPairing();
 		
 		
     return USBH_OK;
