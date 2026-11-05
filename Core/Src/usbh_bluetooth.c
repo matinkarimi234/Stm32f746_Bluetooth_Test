@@ -3,6 +3,7 @@
 #include "usbh_pipes.h"
 #include "usbh_ioreq.h"
 #include "usbh_ctlreq.h"
+#include "bt_acl_diag.h"
 
 /* ------------------------------------------------------------- */
 /* USB interface and endpoint information                        */
@@ -508,6 +509,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
 		BT_ResetConnectionState();
 		BT_ResetPairing();
 		BT_ResetAuthentication();
+		BT_ACL_Reset();
 
     interface = USBH_FindInterface(phost, USB_BT_CLASS, USB_BT_SUBCLASS, USB_BT_PROTOCOL);
 
@@ -599,6 +601,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
 		BT_ResetConnectionState();
 		BT_ResetPairing();
 		BT_ResetAuthentication();
+		BT_ACL_Reset();
 
     return USBH_OK;
 }
@@ -1933,6 +1936,7 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		BT_ProcessConnection(phost);
 		BT_ProcessAuthentication(phost);
 		BT_ProcessPairing();
+		BT_ACL_Process(phost);
 		
 		
     return USBH_OK;
