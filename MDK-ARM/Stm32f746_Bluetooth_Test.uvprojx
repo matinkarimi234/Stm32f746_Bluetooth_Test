@@ -428,6 +428,11 @@
               <FileType>1</FileType>
               <FilePath>..\Core\Src\bt_acl_diag.c</FilePath>
             </File>
+            <File>
+              <FileName>bt_acl_tx.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\bt_acl_tx.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -4,6 +4,7 @@
 #include "usbh_ioreq.h"
 #include "usbh_ctlreq.h"
 #include "bt_acl_diag.h"
+#include "bt_acl_tx.h"
 
 /* ------------------------------------------------------------- */
 /* USB interface and endpoint information                        */
@@ -122,8 +123,7 @@ volatile uint8_t BT_SSPMode = 0xFFU;
 static const uint8_t BT_SSPEnableParameter = 0x01U;
 
 /* HCI event mask, little-endian, enabling BR/EDR security events */
-static const uint8_t BT_SSPEventMask[8] = {0xFFU, 0xFFU, 0xFBU, 0xFFU, 0x07U, 0xF8U, 0x3FU, 0x00U};
-
+static const uint8_t BT_SSPEventMask[8] = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x07U, 0xF8U, 0x3FU, 0x00U};
 
 /* SSP pairing management */
 
@@ -510,6 +510,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
 		BT_ResetPairing();
 		BT_ResetAuthentication();
 		BT_ACL_Reset();
+		BT_ACL_TX_Reset();
 
     interface = USBH_FindInterface(phost, USB_BT_CLASS, USB_BT_SUBCLASS, USB_BT_PROTOCOL);
 
@@ -602,6 +603,7 @@ static USBH_StatusTypeDef BT_DeInit(USBH_HandleTypeDef *phost)
 		BT_ResetPairing();
 		BT_ResetAuthentication();
 		BT_ACL_Reset();
+		BT_ACL_TX_Reset();
 
     return USBH_OK;
 }
@@ -1454,11 +1456,10 @@ static void BT_AppendHCIEventBytes(const uint8_t *data, uint16_t length)
 
             /* Decode the assembled event */
             BT_DecodeHCIEvent(complete_length);
-            BT_DecodeHCICommandStatus(complete_length);
-            BT_ProcessAsyncEvent(complete_length);
-
-            /* Notify the application */
-            BT_HCI_EventCallback(BT_EventRxBuffer, complete_length);
+						BT_DecodeHCICommandStatus(complete_length);
+						BT_ProcessAsyncEvent(complete_length);
+						BT_ACL_TX_OnHCIEvent(BT_EventRxBuffer, complete_length);
+						BT_HCI_EventCallback(BT_EventRxBuffer, complete_length);
 
             /* Reset for the next event */
             BT_HCI_PartialLength = 0U;
@@ -1937,7 +1938,8 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		BT_ProcessAuthentication(phost);
 		BT_ProcessPairing();
 		BT_ACL_Process(phost);
-		
+		BT_ACL_TX_Process(phost);
+				
 		
     return USBH_OK;
 }
