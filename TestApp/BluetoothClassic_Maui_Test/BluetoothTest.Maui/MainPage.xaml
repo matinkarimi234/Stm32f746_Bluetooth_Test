@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="BluetoothTest.Maui.MainPage" BackgroundColor="{StaticResource Background}" Title="Bluetooth Classic Test">
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="14">
+            <Label Text="Bluetooth Classic / RFCOMM" FontSize="24" FontAttributes="Bold" />
+            <Label Text="Paired devices • SPP UUID 00001101-0000-1000-8000-00805F9B34FB" FontSize="12" TextColor="#B7C6D5" />
+            <Border BackgroundColor="{StaticResource Surface}" StrokeThickness="0" Padding="12" StrokeShape="RoundRectangle 12">
+                <VerticalStackLayout Spacing="8">
+                    <Label x:Name="StatusLabel" Text="Disconnected" FontAttributes="Bold" />
+                    <Picker x:Name="DevicePicker" Title="Choose a paired Bluetooth device" ItemDisplayBinding="{Binding DisplayName}" />
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                        <Button Grid.Column="0" Text="Refresh" Clicked="OnRefreshClicked" />
+                        <Button Grid.Column="1" Text="Connect" Clicked="OnConnectClicked" />
+                        <Button Grid.Column="2" Text="Disconnect" Clicked="OnDisconnectClicked" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+            <Label Text="Transmit" FontSize="18" FontAttributes="Bold" />
+            <Editor x:Name="TxEditor" Text="Hello STM32" AutoSize="TextChanges" HeightRequest="90" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                <Button Grid.Column="0" Text="Send UTF-8" Clicked="OnSendTextClicked" />
+                <Button Grid.Column="1" Text="Send HEX" Clicked="OnSendHexClicked" />
+            </Grid>
+            <Label Text="Receive and event log" FontSize="18" FontAttributes="Bold" />
+            <Editor x:Name="LogEditor" IsReadOnly="True" HeightRequest="320" FontSize="12" />
+            <Button Text="Clear log" Clicked="OnClearClicked" />
+            <Label Text="A successful Bluetooth pairing is not the same as an SPP connection. STM32 must advertise UUID 0x1101 and accept RFCOMM first." FontSize="12" TextColor="#B7C6D5" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

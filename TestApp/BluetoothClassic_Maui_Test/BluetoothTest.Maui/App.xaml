@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="BluetoothTest.Maui.App">
+    <Application.Resources>
+        <ResourceDictionary>
+            <Color x:Key="Background">#101820</Color>
+            <Color x:Key="Surface">#203040</Color>
+            <Color x:Key="Accent">#F5B942</Color>
+            <Style TargetType="Label"><Setter Property="TextColor" Value="White" /></Style>
+            <Style TargetType="Button"><Setter Property="BackgroundColor" Value="{StaticResource Accent}" /><Setter Property="TextColor" Value="#101820" /><Setter Property="CornerRadius" Value="10" /></Style>
+            <Style TargetType="Editor"><Setter Property="TextColor" Value="White" /><Setter Property="BackgroundColor" Value="{StaticResource Surface}" /></Style>
+            <Style TargetType="Picker"><Setter Property="TextColor" Value="White" /><Setter Property="BackgroundColor" Value="{StaticResource Surface}" /></Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

@@ -42,6 +42,23 @@ extern volatile uint16_t BT_ACL_HCIExpected;
 extern volatile uint16_t BT_ACL_L2CAPPartial;
 extern volatile uint16_t BT_ACL_L2CAPExpected;
 
+/* Step 18B: single SDP L2CAP channel diagnostics */
+#define BT_L2CAP_CLOSED              0U
+#define BT_L2CAP_CONFIGURING         1U
+#define BT_L2CAP_OPEN                2U
+extern volatile uint8_t BT_L2CAP_State;
+extern volatile uint16_t BT_L2CAP_RemoteCID;
+extern volatile uint16_t BT_L2CAP_OurCID;
+extern volatile uint32_t BT_L2CAP_ConnectionRequests;
+extern volatile uint32_t BT_L2CAP_ConfigRequests;
+extern volatile uint32_t BT_L2CAP_InfoRequests;
+extern volatile uint32_t BT_L2CAP_QueuedSignals;
+extern volatile uint32_t BT_L2CAP_SentSignals;
+extern volatile uint32_t BT_L2CAP_QueueOverflows;
+extern volatile uint32_t BT_L2CAP_ProtocolErrors;
+extern volatile uint32_t BT_L2CAP_SDPDataCount;
+extern volatile uint8_t BT_L2CAP_LastSDPCode;
+
 void BT_ACL_Reset(void);
 void BT_ACL_Process(USBH_HandleTypeDef *phost);
 

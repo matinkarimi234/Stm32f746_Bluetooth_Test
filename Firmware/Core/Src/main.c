@@ -117,18 +117,6 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		MX_USB_HOST_Process();
-		
-		if (BT_Connected == 0U)
-		{
-				BT_EchoTestQueued = 0U;
-		}
-		else if ((BT_EchoTestQueued == 0U) && (BT_ACL_TX_BufferState == BT_ACL_BUF_READY))
-		{
-				if (BT_ACL_TX_SendEchoRequest(0x51U) == USBH_OK)
-				{
-						BT_EchoTestQueued = 1U;
-				}
-		}
   }
   /* USER CODE END 3 */
 }

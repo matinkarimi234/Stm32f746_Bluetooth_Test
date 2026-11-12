@@ -1,0 +1,1 @@
+<maui:MauiWinUIApplication x:Class="BluetoothTest.Maui.WinUI.App" xmlns:maui="using:Microsoft.Maui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" />

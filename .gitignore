@@ -58,3 +58,13 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+*.cache
+*.aps
+*.pfx
+*.keystore
+
