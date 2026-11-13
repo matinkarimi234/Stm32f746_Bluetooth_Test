@@ -60,6 +60,7 @@ extern volatile uint32_t BT_L2CAP_SDPDataCount;
 extern volatile uint8_t BT_L2CAP_LastSDPCode;
 
 void BT_ACL_Reset(void);
+void BT_ACL_LinkClosed(void);
 void BT_ACL_Process(USBH_HandleTypeDef *phost);
 
 #endif /* BT_ACL_DIAG_H */

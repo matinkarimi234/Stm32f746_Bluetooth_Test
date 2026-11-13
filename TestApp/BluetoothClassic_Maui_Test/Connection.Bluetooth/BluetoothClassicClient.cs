@@ -9,6 +9,8 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
     private readonly IPlatformRfcomm _transport;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly object _attemptGate = new();
+    private CancellationTokenSource? _connectCts;
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveTask;
     private int _connected;
@@ -16,6 +18,8 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public event EventHandler<byte[]>? DataReceived;
     public event EventHandler<string>? StatusChanged;
+
+    internal BluetoothClassicClient(IPlatformRfcomm transport) => _transport = transport;
 
     public BluetoothClassicClient()
     {
@@ -35,16 +39,20 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(device);
         await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_attemptGate) _connectCts = attempt;
         try
         {
             await StopSessionAsync().ConfigureAwait(false);
             RaiseStatus($"Connecting to {device.Name}...");
             try
             {
-                await _transport.OpenAsync(device, cancellationToken).ConfigureAwait(false);
+                await _transport.OpenAsync(device, attempt.Token).ConfigureAwait(false);
+                attempt.Token.ThrowIfCancellationRequested();
                 _receiveCts = new CancellationTokenSource();
                 Volatile.Write(ref _connected, 1);
-                _receiveTask = Task.Run(() => ReceiveLoopAsync(_receiveCts.Token));
+                var receiveToken = _receiveCts.Token;
+                _receiveTask = Task.Run(() => ReceiveLoopAsync(receiveToken));
                 RaiseStatus($"RFCOMM connected: {device.Name}");
             }
             catch
@@ -54,7 +62,11 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
                 throw;
             }
         }
-        finally { _lifecycle.Release(); }
+        finally
+        {
+            lock (_attemptGate) _connectCts = null;
+            _lifecycle.Release();
+        }
     }
 
     public async Task SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
@@ -71,6 +83,8 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
 
     public async Task DisconnectAsync()
     {
+        // Interrupt a native Connect before waiting for lifecycle ownership.
+        lock (_attemptGate) _connectCts?.Cancel();
         await _lifecycle.WaitAsync().ConfigureAwait(false);
         try { await StopSessionAsync().ConfigureAwait(false); }
         finally { _lifecycle.Release(); }
@@ -111,7 +125,11 @@ public sealed class BluetoothClassicClient : IAsyncDisposable
             if (!cancellationToken.IsCancellationRequested)
                 RaiseStatus($"Receive stopped: {ex.Message}");
         }
-        finally { Volatile.Write(ref _connected, 0); }
+        finally
+        {
+            Volatile.Write(ref _connected, 0);
+            await _transport.CloseAsync().ConfigureAwait(false);
+        }
     }
 
     private void RaiseStatus(string status) => StatusChanged?.Invoke(this, status);

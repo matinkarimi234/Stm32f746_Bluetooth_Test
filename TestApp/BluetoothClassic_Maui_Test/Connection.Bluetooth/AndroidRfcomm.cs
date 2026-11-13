@@ -44,6 +44,7 @@ internal sealed class AndroidRfcomm : IPlatformRfcomm
 
     public async Task OpenAsync(BluetoothDeviceInfo device, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         EnsurePermission();
         await CloseAsync().ConfigureAwait(false);
         var adapter = Adapter;
@@ -54,8 +55,17 @@ internal sealed class AndroidRfcomm : IPlatformRfcomm
             ?? throw new IOException("Unable to create RFCOMM socket.");
         _socket = socket;
         using var cancel = cancellationToken.Register(() => { try { socket.Close(); } catch { } });
-        try { await Task.Run(() => socket.Connect(), cancellationToken).ConfigureAwait(false); }
-        catch { await CloseAsync().ConfigureAwait(false); throw; }
+        try
+        {
+            await Task.Run(() => socket.Connect(), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch
+        {
+            await CloseAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
     }
 
     public async Task<int> ReadAsync(byte[] buffer, CancellationToken cancellationToken)

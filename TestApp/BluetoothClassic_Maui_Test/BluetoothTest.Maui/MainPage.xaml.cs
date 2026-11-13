@@ -51,8 +51,10 @@ public partial class MainPage : ContentPage
         try
         {
             await EnsurePermissionAsync();
-            await _client.ConnectAsync(chosen);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await _client.ConnectAsync(chosen, timeout.Token);
         }
+        catch (OperationCanceledException) { AddLog("Connect timed out; verify STM32 SDP and RFCOMM server diagnostics."); }
         catch (Exception ex) { AddLog("Connect failed: " + ex.Message); }
     }
 

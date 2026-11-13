@@ -3,6 +3,8 @@
 #include "usbh_pipes.h"
 #include "usbh_ioreq.h"
 #include "usbh_ctlreq.h"
+#include "bt_bonds.h"
+#include "bt_spp.h"
 #include "bt_acl_diag.h"
 #include "bt_acl_tx.h"
 
@@ -77,6 +79,9 @@ volatile uint8_t BT_BD_ADDR[6] = {0};
 static uint8_t BT_HCI_CmdBuffer[3U + BT_HCI_MAX_CMD_PARAMS];
 static uint8_t BT_HCI_CmdLength = 0U;
 static uint32_t BT_HCI_CmdStartTick = 0U;
+/* Keep completion through the next full pass, including initialization (which
+ * runs before this command engine). Earlier owners cannot overwrite replies. */
+static uint8_t BT_HCI_ResultHeld = 0U;
 
 volatile uint8_t BT_HCI_CmdState = BT_HCI_CMD_IDLE;
 volatile uint8_t BT_HCI_CmdEventSeen = 0U;
@@ -144,6 +149,10 @@ volatile uint32_t BT_PairDroppedCount = 0U;
 static uint8_t BT_PairCmdParams[22];
 static uint8_t BT_PairCmdLength = 0U;
 static uint16_t BT_PairCmdOpcode = 0U;
+#define BT_PAIR_QUEUE_SIZE 4U
+typedef struct { uint16_t opcode; uint8_t length, params[22]; } BT_PairReply;
+static BT_PairReply BT_PairQueue[BT_PAIR_QUEUE_SIZE];
+static uint8_t BT_PairQueueHead, BT_PairQueueTail, BT_PairQueueCount;
 
 /* RAM-only bond storage; never print or expose the key */
 static uint8_t BT_PairLinkKey[16];
@@ -356,6 +365,7 @@ static void BT_ResetGenericCommand(void)
     BT_HCI_CmdReplyEvent = 0U;
     BT_HCI_CmdLength = 0U;
     BT_HCI_CmdStartTick = 0U;
+    BT_HCI_ResultHeld = 0U;
 
     BT_InitState = BT_INIT_IDLE;
     BT_InitErrorOpcode = 0U;
@@ -474,6 +484,7 @@ static void BT_ResetPairing(void)
 
     BT_PairCmdLength = 0U;
     BT_PairCmdOpcode = 0U;
+    BT_PairQueueHead = BT_PairQueueTail = BT_PairQueueCount = 0U;
 
     for (i = 0U; i < 22U; i++) { BT_PairCmdParams[i] = 0U; }
     for (i = 0U; i < 16U; i++) { BT_PairLinkKey[i] = 0U; }
@@ -508,6 +519,7 @@ static USBH_StatusTypeDef BT_Init(USBH_HandleTypeDef *phost)
     BT_ResetGenericCommand();
 		BT_ResetConnectionState();
 		BT_ResetPairing();
+    BT_Bonds_Init();
 		BT_ResetAuthentication();
 		BT_ACL_Reset();
 		BT_ACL_TX_Reset();
@@ -625,6 +637,7 @@ static USBH_StatusTypeDef BT_HCI_QueueCommand(uint16_t opcode, const uint8_t *pa
     if (BT_Endpoints.PipesReady == 0U) { return USBH_FAIL; }
     if (length > BT_HCI_MAX_CMD_PARAMS) { return USBH_FAIL; }
     if ((length != 0U) && (params == NULL)) { return USBH_FAIL; }
+    if (BT_HCI_ResultHeld != 0U) { return USBH_BUSY; }
     if (BT_HCI_CmdState == BT_HCI_CMD_ERROR) { return USBH_FAIL; }
     if ((BT_HCI_CmdState != BT_HCI_CMD_IDLE) && (BT_HCI_CmdState != BT_HCI_CMD_OK)) { return USBH_BUSY; }
 
@@ -724,11 +737,13 @@ static void BT_ProcessHCICommand(USBH_HandleTypeDef *phost)
                 if (BT_HCI_CmdStatus == 0U)
                 {
                     BT_HCI_CmdState = BT_HCI_CMD_OK;
+                    BT_HCI_ResultHeld = 2U;
                 }
                 else
                 {
                     BT_HCI_DebugFailStage = 4U;
                     BT_HCI_CmdState = BT_HCI_CMD_ERROR;
+                    BT_HCI_ResultHeld = 2U;
                 }
             }
             else if ((phost->Timer - BT_HCI_CmdStartTick) >= 2000U)
@@ -1091,18 +1106,14 @@ static uint8_t BT_QueuePairReply(uint16_t opcode, const uint8_t *address, const 
 
     if ((address == NULL) || (extra_length > 16U) || ((extra_length != 0U) && (extra == NULL))) { return 0U; }
 
-    if (BT_PairCmdState != BT_PAIR_IDLE)
-    {
-        BT_PairDroppedCount++;
-        return 0U;
-    }
-
-    for (i = 0U; i < 6U; i++) { BT_PairCmdParams[i] = address[i]; }
-    for (i = 0U; i < extra_length; i++) { BT_PairCmdParams[6U + i] = extra[i]; }
-
-    BT_PairCmdLength = 6U + extra_length;
-    BT_PairCmdOpcode = opcode;
-    BT_PairCmdState = BT_PAIR_SEND;
+    if (BT_PairQueueCount >= BT_PAIR_QUEUE_SIZE)
+    { BT_PairDroppedCount++; return 0U; }
+    BT_PairQueue[BT_PairQueueTail].opcode = opcode;
+    BT_PairQueue[BT_PairQueueTail].length = (uint8_t)(6U + extra_length);
+    for (i = 0U; i < 6U; i++) { BT_PairQueue[BT_PairQueueTail].params[i] = address[i]; }
+    for (i = 0U; i < extra_length; i++) { BT_PairQueue[BT_PairQueueTail].params[6U+i] = extra[i]; }
+    BT_PairQueueTail = (uint8_t)((BT_PairQueueTail + 1U) % BT_PAIR_QUEUE_SIZE);
+    BT_PairQueueCount++;
 
     return 1U;
 }
@@ -1124,11 +1135,15 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 
     if (event_code == BT_HCI_EVT_COMMAND_COMPLETE) { return; }
 
+    /* Track peer-initiated security, even when auto-auth is disabled. */
+    if ((event_code == 0x08U) && (length == 6U) && (BT_EventRxBuffer[2] == 0U) &&
+        ((((uint16_t)BT_EventRxBuffer[3] | ((uint16_t)BT_EventRxBuffer[4] << 8)) & 0x0FFFU) == BT_ConnectionHandle))
+    { BT_ConnectionEncrypted = BT_EventRxBuffer[5]; }
     BT_AsyncEventCount++;
     BT_AsyncLastCode = event_code;
     BT_AsyncLastLength = (uint16_t)length;
 
-    for (i = 0U; i < length; i++) { BT_AsyncLastData[i] = BT_EventRxBuffer[i]; }
+    for (i = 0U; i < length; i++) { BT_AsyncLastData[i] = ((event_code == 0x18U) && (i >= 8U) && (i < 24U)) ? 0U : BT_EventRxBuffer[i]; }
 
     switch (event_code)
     {
@@ -1161,7 +1176,7 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 										}
 
 										/* 0x01 = remain peripheral, no role switch */
-										BT_ConnAcceptParams[6] = 0x00U;
+										BT_ConnAcceptParams[6] = 0x01U;
 
 										BT_ConnAcceptStatus = 0xFFU;
 										BT_ConnCompleteStatus = 0xFFU;
@@ -1188,6 +1203,14 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 						uint8_t key_matches = BT_PairLinkKeyValid;
 
 						if (length != 8U) { break; }
+
+                        /* HCI event addresses are in byte-reversed display order. */
+                        if (BT_Bonds_Find(&BT_EventRxBuffer[2], BT_PairLinkKey) != 0U)
+                        {
+                            for (i = 0U; i < 6U; ++i) { BT_PairBondAddress[i] = BT_EventRxBuffer[2U + i]; }
+                            BT_PairLinkKeyValid = 1U;
+                            key_matches = 1U;
+                        }
 
 						BT_PairEventCount++;
 
@@ -1305,6 +1328,7 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 										BT_AuthCompleteStatus = BT_EventRxBuffer[2];
 										BT_AuthCompleteSeen = 1U;
 										BT_AuthCompleteCount++;
+                                        BT_AuthState = (BT_AuthCompleteStatus == 0U) ? BT_AUTH_OK : BT_AUTH_ERROR;
 								}
 						}
 
@@ -1325,6 +1349,7 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 
 										BT_PairLinkKeyType = key_type;
 										BT_PairLinkKeyValid = 1U;
+                                        BT_Bonds_Remember(&BT_EventRxBuffer[2], &BT_EventRxBuffer[8], key_type);
 								}
 								else
 								{
@@ -1383,6 +1408,11 @@ static void BT_ProcessAsyncEvent(uint32_t length)
 									BT_DisconnectionCount++;
 
 									BT_Connected = 0U;
+                                    BT_AuthCompleteSeen = 0U;
+                                    BT_AuthState = BT_AUTH_IDLE;
+                                    BT_SPP_Reset();
+                                    BT_ACL_TX_LinkClosed();
+                                    BT_ACL_LinkClosed();
 									BT_ConnectionHandle = 0xFFFFU;
 									BT_ConnectionEncrypted = 0U;
 									BT_ConnCompleteSeen = 0U;
@@ -1681,6 +1711,20 @@ static void BT_ProcessSSPConfiguration(void)
 static void BT_ProcessPairing(void)
 {
     USBH_StatusTypeDef status;
+    uint8_t i;
+    if (BT_PairCmdState == BT_PAIR_IDLE && BT_PairQueueCount != 0U)
+    {
+        BT_PairCmdOpcode = BT_PairQueue[BT_PairQueueHead].opcode;
+        BT_PairCmdLength = BT_PairQueue[BT_PairQueueHead].length;
+        for (i = 0U; i < BT_PairCmdLength; ++i)
+        {
+            BT_PairCmdParams[i] = BT_PairQueue[BT_PairQueueHead].params[i];
+            BT_PairQueue[BT_PairQueueHead].params[i] = 0U;
+        }
+        BT_PairQueueHead = (uint8_t)((BT_PairQueueHead + 1U) % BT_PAIR_QUEUE_SIZE);
+        BT_PairQueueCount--;
+        BT_PairCmdState = BT_PAIR_SEND;
+    }
 
     switch (BT_PairCmdState)
     {
@@ -1889,7 +1933,8 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
                 /* Preserve last raw USB packet */
                 BT_LastEventLength = (uint16_t)length;
 
-                for (i = 0U; i < length; i++) { BT_LastEventData[i] = BT_EventUSBPacket[i]; }
+                /* Raw USB chunks may contain fragmented link keys: do not publish them. */
+                for (i = 0U; i < BT_EVENT_BUFFER_SIZE; i++) { BT_LastEventData[i] = 0U; }
 
                 BT_EventPacketCount++;
 
@@ -1937,8 +1982,21 @@ static USBH_StatusTypeDef BT_Process(USBH_HandleTypeDef *phost)
 		BT_ProcessConnection(phost);
 		BT_ProcessAuthentication(phost);
 		BT_ProcessPairing();
-		BT_ACL_Process(phost);
-		BT_ACL_TX_Process(phost);
+        /* Ensure TX/controller link is ready before decoding incoming L2CAP. */
+        BT_ACL_TX_Process(phost);
+        BT_SPP_Process();
+        BT_ACL_Process(phost);
+        BT_SPP_Process();
+        BT_ACL_TX_Process(phost);
+        /* A controller rejection is a completed command, not a broken USB pipe.
+         * Release only after its owner has had a complete pass to observe it. */
+        if (BT_HCI_ResultHeld != 0U)
+        {
+            BT_HCI_ResultHeld--;
+            if ((BT_HCI_ResultHeld == 0U) && (BT_HCI_CmdState == BT_HCI_CMD_ERROR) &&
+                BT_HCI_CmdEventSeen && BT_HCI_DebugUSBCompleted)
+            { BT_HCI_CmdState = BT_HCI_CMD_IDLE; }
+        }
 				
 		
     return USBH_OK;

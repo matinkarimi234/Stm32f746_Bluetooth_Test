@@ -276,7 +276,7 @@
               <OCR_RVCT4>
                 <Type>1</Type>
                 <StartAddress>0x8000000</StartAddress>
-                <Size>0x100000</Size>
+                <Size>0xc0000</Size>
               </OCR_RVCT4>
               <OCR_RVCT5>
                 <Type>1</Type>
@@ -432,6 +432,16 @@
               <FileName>bt_acl_tx.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\bt_acl_tx.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_spp.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\bt_spp.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_bonds.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\bt_bonds.c</FilePath>
             </File>
           </Files>
         </Group>

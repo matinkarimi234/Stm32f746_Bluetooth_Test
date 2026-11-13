@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Connection.Bluetooth/BluetoothClassicClient.cs" Link="BluetoothClassicClient.cs" />
+    <Compile Include="../Connection.Bluetooth/IPlatformRfcomm.cs" Link="IPlatformRfcomm.cs" />
+    <Compile Include="../Connection.Bluetooth/BluetoothDeviceInfo.cs" Link="BluetoothDeviceInfo.cs" />
+  </ItemGroup>
+</Project>

@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "bt_acl_tx.h"
 #include "usbh_bluetooth.h"
+#include "bt_bonds.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -117,6 +118,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		MX_USB_HOST_Process();
+        BT_Bonds_Process();
   }
   /* USER CODE END 3 */
 }
