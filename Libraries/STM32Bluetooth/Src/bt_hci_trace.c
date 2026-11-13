@@ -1,7 +1,7 @@
 
 #include "bt_hci_trace.h"
 #include "usbh_bluetooth.h"
-#include "stm32f7xx_hal.h"
+#include "bt_port.h"
 
 /* ------------------------------------------------------------- */
 /* HCI Event History                                             */
@@ -99,7 +99,7 @@ void BT_HCI_EventCallback(const uint8_t *event, uint16_t length)
     BT_TraceOpcode[slot] = 0U;
     BT_TraceStatus[slot] = 0xFFU;
 		BT_TraceCmdCredits[slot] = 0xFFU;
-    BT_TraceTick[slot] = HAL_GetTick();
+    BT_TraceTick[slot] = BT_Port_GetTick();
 
     /* Snapshot Bluetooth state */
     BT_TraceConnState[slot] = BT_ConnState;

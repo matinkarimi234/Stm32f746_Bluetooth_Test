@@ -1,11 +1,11 @@
 #include "bt_bonds.h"
-#include "stm32f7xx_hal.h"
+#include "bt_port.h"
 #include "usbh_bluetooth.h"
 #include <string.h>
 
 #define BT_BOND_MAGIC 0x424F4E44UL
 #define BT_BOND_JOURNAL_RECORD_BYTES 36U
-#define BT_BOND_MAX_JOURNAL_SLOTS (BT_BONDS_FLASH_BYTES / BT_BOND_JOURNAL_RECORD_BYTES)
+#define BT_BOND_MAX_JOURNAL_SLOTS (BT_BONDS_STORAGE_BYTES / BT_BOND_JOURNAL_RECORD_BYTES)
 
 typedef struct
 {
@@ -22,6 +22,7 @@ typedef char BT_BondRecord_SizeMustBe36[(sizeof(BT_BondRecord) == 36U) ? 1 : -1]
 static BT_BondRecord cache[BT_BONDS_MAX_DEVICES];
 static uint8_t count = 0U;
 static uint8_t initialized = 0U;
+static uint8_t storage_fault = 0U;
 static uint16_t free_slot = 0U;
 static uint32_t next_seq = 1UL;
 static uint16_t pending_mask = 0U;
@@ -69,13 +70,15 @@ static uint8_t BT_Bonds_Validate(const BT_BondRecord *r)
 
 void BT_Bonds_Init(void)
 {
-    const BT_BondRecord *r;
+    BT_BondRecord record;
+    const BT_BondRecord *r = &record;
     uint16_t slot;
     int8_t idx;
     uint8_t i;
     uint8_t oldest;
     if (initialized != 0U) { return; }
     initialized = 1U;
+    storage_fault = 0U;
     count = 0U;
     free_slot = BT_BOND_MAX_JOURNAL_SLOTS;
     pending_mask = 0U;
@@ -83,7 +86,8 @@ void BT_Bonds_Init(void)
     memset(cache, 0, sizeof(cache));
     for (slot = 0U; slot < BT_BOND_MAX_JOURNAL_SLOTS; ++slot)
     {
-        r = (const BT_BondRecord *)(BT_BONDS_FLASH_START + (uint32_t)slot * sizeof(BT_BondRecord));
+        if (!BT_Port_BondRead((uint32_t)slot * sizeof(record), &record, sizeof(record)))
+        { storage_fault = 1U; BT_Bonds_FlashErrors++; return; }
         if (r->magic == 0xFFFFFFFFUL)
         {
             uint32_t j;
@@ -165,13 +169,13 @@ void BT_Bonds_Remember(const uint8_t address[6], const uint8_t key[16], uint8_t 
 void BT_Bonds_Process(void)
 {
     const BT_BondRecord *r;
-    const uint32_t *words;
-    uint32_t addr;
+    BT_BondRecord candidate;
+    uint32_t offset;
     uint8_t i;
     uint8_t ok = 1U;
     uint8_t index = 0xFFU;
     extern volatile uint8_t BT_Connected;
-    if ((BT_Bonds_Dirty == 0U) || (BT_Connected != 0U) ||
+    if (storage_fault || (BT_Bonds_Dirty == 0U) || (BT_Connected != 0U) ||
         (BT_ConnState != BT_CONN_IDLE && BT_ConnState != BT_CONN_FAILED) ||
         (BT_PairCmdState != BT_PAIR_IDLE) ||
         (BT_HCI_CmdState != BT_HCI_CMD_IDLE && BT_HCI_CmdState != BT_HCI_CMD_OK)) { return; }
@@ -181,23 +185,17 @@ void BT_Bonds_Process(void)
      * torn records. Never assume the slot after that hole is also erased. */
     while (free_slot < BT_BOND_MAX_JOURNAL_SLOTS)
     {
-        const uint32_t *candidate = (const uint32_t *)(BT_BONDS_FLASH_START +
-            (uint32_t)free_slot * sizeof(BT_BondRecord));
-        for (i = 0U; i < 9U; ++i) { if (candidate[i] != 0xFFFFFFFFUL) { break; } }
+        const uint32_t *words = (const uint32_t *)&candidate;
+        if (!BT_Port_BondRead((uint32_t)free_slot * sizeof(candidate), &candidate, sizeof(candidate)))
+        { storage_fault = 1U; BT_Bonds_FlashErrors++; return; }
+        for (i = 0U; i < 9U; ++i) { if (words[i] != 0xFFFFFFFFUL) { break; } }
         if (i == 9U) { break; }
         free_slot++;
     }
     if (free_slot >= BT_BOND_MAX_JOURNAL_SLOTS) { BT_Bonds_Full = 1U; return; }
     r = &cache[index];
-    words = (const uint32_t *)r;
-    addr = BT_BONDS_FLASH_START + (uint32_t)free_slot * sizeof(BT_BondRecord);
-    if (HAL_FLASH_Unlock() != HAL_OK) { BT_Bonds_FlashErrors++; return; }
-    for (i = 1U; i < 9U; ++i)
-    {
-        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr + 4UL * i, words[i]) != HAL_OK) { ok = 0U; break; }
-    }
-    if ((ok != 0U) && (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr, words[0]) != HAL_OK)) { ok = 0U; }
-    (void)HAL_FLASH_Lock();
+    offset = (uint32_t)free_slot * sizeof(BT_BondRecord);
+    ok = BT_Port_BondWriteRecord(offset, r, sizeof(BT_BondRecord));
     if (ok != 0U)
     {
         BT_Bonds_Writes++;
@@ -216,20 +214,9 @@ void BT_Bonds_Process(void)
 /* Explicit opt-in factory reset. Do NOT call automatically on normal startup. */
 uint8_t BT_Bonds_ClearAll(void)
 {
-    FLASH_EraseInitTypeDef erase;
-    uint32_t sector_error = 0UL;
-    HAL_StatusTypeDef status;
-    extern volatile uint8_t BT_Connected;
-    if (BT_Connected != 0U) { return 0U; }
-    memset(&erase, 0, sizeof(erase));
-    erase.TypeErase = FLASH_TYPEERASE_SECTORS;
-    erase.VoltageRange = FLASH_VOLTAGE_RANGE_3;
-    erase.Sector = FLASH_SECTOR_7;
-    erase.NbSectors = 1U;
-    if (HAL_FLASH_Unlock() != HAL_OK) { BT_Bonds_FlashErrors++; return 0U; }
-    status = HAL_FLASHEx_Erase(&erase, &sector_error);
-    (void)HAL_FLASH_Lock();
-    if (status != HAL_OK) { BT_Bonds_FlashErrors++; return 0U; }
+    if ((BT_Connected != 0U) || (BT_ConnState != BT_CONN_IDLE && BT_ConnState != BT_CONN_FAILED) ||
+        BT_PairCmdState != BT_PAIR_IDLE || (BT_HCI_CmdState != BT_HCI_CMD_IDLE && BT_HCI_CmdState != BT_HCI_CMD_OK)) { return 0U; }
+    if (!BT_Port_BondErase()) { BT_Bonds_FlashErrors++; return 0U; }
     initialized = 0U;
     BT_Bonds_Dirty = 0U;
     pending_mask = 0U;

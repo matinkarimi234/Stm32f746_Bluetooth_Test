@@ -40,6 +40,11 @@ static uint16_t rfcomm_mtu;
 static uint8_t serial_bytes[SERIAL_CAPACITY];
 static uint16_t serial_head, serial_tail, serial_count;
 static uint8_t peer_flow_off;
+static BT_SPP_ReceiveCallback receive_callback;
+static void *receive_context;
+void BT_SPP_SetReceiver(BT_SPP_ReceiveCallback callback, void *context)
+{ receive_callback = callback; receive_context = context; }
+typedef char BT_NameLengthMustFit[(sizeof(BT_DEVICE_NAME) > 1U && sizeof(BT_DEVICE_NAME) <= 65U) ? 1 : -1];
 volatile BT_SPP_Diagnostics BT_SPP_Debug;
 volatile BT_SPP_Event BT_SPP_Trace[32];
 volatile uint32_t BT_SPP_TraceCount = 0U;
@@ -353,13 +358,16 @@ static const uint8_t av_0004[] = {0x35,12,0x35,3,0x19,1,0,0x35,5,0x19,0,3,0x08,B
 static const uint8_t av_0005[] = {0x35,3,0x19,0x10,0x02};
 static const uint8_t av_0006[] = {0x35,9,0x09,0x65,0x6E,0x09,0x00,0x6A,0x09,0x01,0x00};
 static const uint8_t av_0009[] = {0x35,8,0x35,6,0x19,0x11,0x01,0x09,0x01,0x02};
-static const uint8_t av_0100[] = {0x25,17,'R','e','s','i','s','t','i','v','i','t','y',' ','M','e','t','e','r'};
+static const struct {
+    uint8_t type, length;
+    char name[sizeof(BT_DEVICE_NAME)];
+} av_0100 = {0x25U, sizeof(BT_DEVICE_NAME) - 1U, BT_DEVICE_NAME};
 typedef struct { uint16_t id; const uint8_t *value; uint8_t size; } SDPAttr;
 static const SDPAttr attrs[] = {
     {0x0000U,av_0000,sizeof(av_0000)},{0x0001U,av_0001,sizeof(av_0001)},
     {0x0004U,av_0004,sizeof(av_0004)},{0x0005U,av_0005,sizeof(av_0005)},
     {0x0006U,av_0006,sizeof(av_0006)},{0x0009U,av_0009,sizeof(av_0009)},
-    {0x0100U,av_0100,sizeof(av_0100)}
+    {0x0100U,(const uint8_t *)&av_0100,sizeof(av_0100) - 1U}
 };
 
 /* Support 8-bit and 16-bit length DES; return total element size. */
@@ -708,10 +716,10 @@ static void handle_rfcomm(const uint8_t *p, uint16_t len)
     }
 }
 
-/* Weak default echoes incoming serial data, overridable by application. */
-__weak void BT_SPP_DataReceived(const uint8_t *data, uint16_t length)
+/* Registered application receiver owns framing and optional echo policy. */
+void BT_SPP_DataReceived(const uint8_t *data, uint16_t length)
 {
-    if (!BT_SPP_Send(data, length)) { BT_SPP_Debug.echo_drops++; }
+    if (receive_callback != NULL) { receive_callback(data, length, receive_context); }
 }
 uint8_t BT_SPP_Send(const uint8_t *data, uint16_t length)
 {

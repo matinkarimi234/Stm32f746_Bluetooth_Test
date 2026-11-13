@@ -2,6 +2,7 @@
 #ifndef USBH_BLUETOOTH_H
 #define USBH_BLUETOOTH_H
 
+#include "bt_config.h"
 #include "usbh_core.h"
 
 /* USB Bluetooth class */
@@ -77,7 +78,6 @@
 #define BT_SCAN_UNSUPPORTED                7U
 
 /* Local Bluetooth name */
-#define BT_DEVICE_NAME                     "Resistivity Meter"
 #define BT_LOCAL_NAME_BYTES                248U
 #define BT_NAME_WAIT_READY                 0U
 #define BT_NAME_SEND                       1U
@@ -227,7 +227,6 @@ void BT_HCI_EventCallback(const uint8_t *event, uint16_t length);
 #define BT_CONN_COMPLETE_TIMEOUT_MS      30000U
 
 /* Development only: automatically accept incoming ACL requests */
-#define BT_AUTO_ACCEPT_CONNECTIONS       1U
 
 extern volatile uint8_t BT_ConnState;
 extern volatile uint8_t BT_Connected;
@@ -269,7 +268,6 @@ extern volatile uint8_t BT_SSPMode;
 /* Step 16B: Bluetooth SSP pairing */
 
 /* Development-only automatic Just Works confirmation */
-#define BT_PAIRING_TEST_MODE             1U
 
 /* HCI pairing events */
 #define BT_HCI_EVT_PIN_CODE_REQUEST      0x16U
@@ -312,7 +310,6 @@ extern volatile uint32_t BT_PairDroppedCount;
 
 
 /* Authentication test */
-#define BT_AUTO_AUTH_TEST             0U
 #define BT_HCI_AUTH_REQUEST_OPCODE    0x0411U
 #define BT_HCI_EVT_AUTH_COMPLETE      0x06U
 

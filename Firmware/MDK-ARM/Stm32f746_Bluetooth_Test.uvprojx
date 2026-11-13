@@ -337,9 +337,9 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls></MiscControls>
-              <Define>USE_HAL_DRIVER,STM32F746xx</Define>
+              <Define>USE_HAL_DRIVER,STM32F746xx,BT_USE_USER_CONFIG</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../USB_HOST/App;../USB_HOST/Target;../Drivers/STM32F7xx_HAL_Driver/Inc;../Drivers/STM32F7xx_HAL_Driver/Inc/Legacy;../Middlewares/ST/STM32_USB_Host_Library/Core/Inc;../Middlewares/ST/STM32_USB_Host_Library/Class/HID/Inc;../Drivers/CMSIS/Device/ST/STM32F7xx/Include</IncludePath>
+              <IncludePath>../../Libraries/STM32Bluetooth/Inc;../Core/Inc;../USB_HOST/App;../USB_HOST/Target;../Drivers/STM32F7xx_HAL_Driver/Inc;../Drivers/STM32F7xx_HAL_Driver/Inc/Legacy;../Middlewares/ST/STM32_USB_Host_Library/Core/Inc;../Middlewares/ST/STM32_USB_Host_Library/Class/HID/Inc;../Drivers/CMSIS/Device/ST/STM32F7xx/Include</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -394,6 +394,11 @@
           <GroupName>Application/User/Core</GroupName>
           <Files>
             <File>
+              <FileName>app_bluetooth.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/app_bluetooth.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>
@@ -413,36 +418,7 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/stm32f7xx_hal_msp.c</FilePath>
             </File>
-            <File>
-              <FileName>usbh_bluetooth.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\usbh_bluetooth.c</FilePath>
-            </File>
-            <File>
-              <FileName>bt_hci_trace.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\bt_hci_trace.c</FilePath>
-            </File>
-            <File>
-              <FileName>bt_acl_diag.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\bt_acl_diag.c</FilePath>
-            </File>
-            <File>
-              <FileName>bt_acl_tx.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\bt_acl_tx.c</FilePath>
-            </File>
-            <File>
-              <FileName>bt_spp.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\bt_spp.c</FilePath>
-            </File>
-            <File>
-              <FileName>bt_bonds.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\bt_bonds.c</FilePath>
-            </File>
+
           </Files>
         </Group>
         <Group>
@@ -607,6 +583,51 @@
         </Group>
         <Group>
           <GroupName>::CMSIS</GroupName>
+        </Group>
+        <Group>
+          <GroupName>Middlewares/STM32Bluetooth</GroupName>
+          <Files>
+            <File>
+              <FileName>usbh_bluetooth.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/usbh_bluetooth.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_hci_trace.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_hci_trace.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_acl_diag.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_acl_diag.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_acl_tx.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_acl_tx.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_spp.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_spp.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_bonds.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_bonds.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_library.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Src/bt_library.c</FilePath>
+            </File>
+            <File>
+              <FileName>bt_port_stm32f746.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Libraries/STM32Bluetooth/Ports/STM32F746/bt_port_stm32f746.c</FilePath>
+            </File>
+          </Files>
         </Group>
       </Groups>
     </Target>

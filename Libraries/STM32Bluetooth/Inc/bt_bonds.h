@@ -1,11 +1,9 @@
 #ifndef BT_BONDS_H
 #define BT_BONDS_H
+#include "bt_config.h"
 #include <stdint.h>
 
-/* STM32F746NG, 1 MB flash. Sector 7 is reserved in the .sct file. */
-#define BT_BONDS_FLASH_START  0x080C0000UL
-#define BT_BONDS_FLASH_BYTES  0x00040000UL
-#define BT_BONDS_MAX_DEVICES  16U
+/* Storage size/policy is configured by the application and port. */
 
 extern volatile uint8_t BT_Bonds_Count;
 extern volatile uint8_t BT_Bonds_Dirty;

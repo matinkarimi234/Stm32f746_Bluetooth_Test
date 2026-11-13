@@ -1,11 +1,11 @@
 #ifndef BT_SPP_H
 #define BT_SPP_H
+#include "bt_config.h"
 #include <stdint.h>
 
 /* One active ACL connection; SDP local CID 0x0040, RFCOMM local CID 0x0041. */
 #define BT_SPP_LOCAL_SDP_CID    0x0040U
 #define BT_SPP_LOCAL_RFCOMM_CID 0x0041U
-#define BT_SPP_RFCOMM_CHANNEL   1U
 #define BT_SPP_CLOSED           0U
 #define BT_SPP_CONFIGURING      1U
 #define BT_SPP_OPEN             2U
@@ -61,10 +61,13 @@ extern volatile uint8_t BT_SPP_RxSignalTraceCode[8];
 extern volatile uint8_t BT_SPP_RxSignalTraceId[8];
 extern volatile uint16_t BT_SPP_RxSignalTraceArg0[8];
 
+typedef void (*BT_SPP_ReceiveCallback)(const uint8_t *data, uint16_t length, void *context);
+/* Persists across dongle and ACL resets. Configure before starting USB Host. */
+void BT_SPP_SetReceiver(BT_SPP_ReceiveCallback callback, void *context);
 void BT_SPP_Reset(void);
 void BT_SPP_OnL2CAP(uint16_t cid, const uint8_t *data, uint16_t length);
 void BT_SPP_Process(void);
-/* Application override: called with a transient, read-only byte span. */
+/* Dispatches a transient span to the configured receiver; no default echo. */
 void BT_SPP_DataReceived(const uint8_t *data, uint16_t length);
 /* Asynchronous transmit; returns 1 if accepted, 0 if not connected or queue full. */
 uint8_t BT_SPP_Send(const uint8_t *data, uint16_t length);
